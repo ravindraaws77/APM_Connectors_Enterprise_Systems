@@ -26,6 +26,13 @@ dependencies = [
 
 [project.optional-dependencies]
 connectors = ["pytest>=8.0", "httpx>=0.27"]
+# apm_connectors_mcp: an MCP server exposing /tools/* as agent tools.
+# Talks to that API purely over HTTP (never imports apm_connectors.tools
+# /graph directly) -- see src/apm_connectors_mcp/server.py's docstring.
+mcp = ["mcp>=2.0", "httpx>=0.27"]
+
+[project.scripts]
+apm-connectors-mcp = "apm_connectors_mcp.server:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
