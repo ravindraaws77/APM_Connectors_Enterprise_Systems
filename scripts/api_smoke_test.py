@@ -6,7 +6,7 @@ exactly what a reasoning/orchestration layer consuming this package
 would do first too.
 
 Setup (one-time):
-  1. pip install -e ".[dev]"
+  1. pip install -e ".[connectors]"
   2. In one terminal: uvicorn apm_connectors.api.app:app --reload --port 8000
 
 Usage:

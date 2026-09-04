@@ -22,7 +22,7 @@ dependency of more than one consumer.
 ## Quick start
 
 ```
-pip install -e ".[dev]"
+pip install -e ".[connectors]"
 pytest -q
 uvicorn apm_connectors.api.app:app --reload --port 8000
 python scripts/api_smoke_test.py
