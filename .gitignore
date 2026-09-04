@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.egg-info/
+
+# Env / secrets
+.env
+.env.*
+!.env.example
+*.pem
+*token*.json
+credentials.json
+client_secret*.json
+
+# State / data
+*.db
+*.sqlite3
+state/*.json
+!state/.gitkeep
+
+# OS / editor
+.DS_Store
+.vscode/
+.idea/
