@@ -23,7 +23,7 @@ def upstream_error(exc: Exception) -> HTTPException:
 
 def to_response(outcome: RunOutcome) -> RunOutcomeResponse:
     return RunOutcomeResponse(
-        process_id=outcome.process_id,
+        action_id=outcome.process_id,
         summary=outcome.summary,
         pending_action=outcome.pending_action,
         final_result=outcome.final_result,

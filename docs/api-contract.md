@@ -23,10 +23,18 @@ Wherever `uvicorn apm_connectors.api.app:app` is running, e.g.
 
 ## Conventions that hold for every route below
 
-- **`process_id` is required on every call** (read or write) — it's the
-  audit-trail key (`StateStore.log_event`), not a resource id you look
-  up first. Reuse the same `process_id` across a whole business
-  process/case so its history reads as one thread.
+- **`process_id` is optional on every call** (read or write). It's only
+  an audit-trail grouping label (`StateStore.log_event`), not something
+  a caller has to look up or invent first — a calling agent generally
+  won't have an internal APM process/case id to hand, and doesn't need
+  one just to call a connector. Pass one if you *do* want related calls
+  to show up together under `GET /processes/{id}/history` (e.g. reusing
+  `"order-4521"` across a whole business case); omit it and the server
+  generates one internally per call so it's still logged, just not
+  grouped with anything else. **For a write**, don't confuse this with
+  the id you need for the decision call below — that one always comes
+  back from the server as `action_id`, whether you passed a
+  `process_id` or not.
 - **Reads execute immediately** and return the tool's data directly, no
   approval step — read is always allowed.
 - **Writes never execute immediately.** Every write route returns a
@@ -55,9 +63,9 @@ Wherever `uvicorn apm_connectors.api.app:app` is running, e.g.
 
 | Route | Kind | Request body | Returns |
 |---|---|---|---|
-| `POST /tools/gmail/search` | read | `{process_id, query, max_results?: 10}` | `[{message_id, thread_id, sender, subject, snippet, received_at}, ...]` |
-| `POST /tools/gmail/read` | read | `{process_id, message_id}` | `{message_id, thread_id, sender, subject, snippet, received_at}` |
-| `POST /tools/gmail/send` | **write** | `{process_id, to, subject, body}` | `RunOutcomeResponse` (see below) |
+| `POST /tools/gmail/search` | read | `{process_id?, query, max_results?: 10}` | `[{message_id, thread_id, sender, subject, snippet, received_at}, ...]` |
+| `POST /tools/gmail/read` | read | `{process_id?, message_id}` | `{message_id, thread_id, sender, subject, snippet, received_at}` |
+| `POST /tools/gmail/send` | **write** | `{process_id?, to, subject, body}` | `RunOutcomeResponse` (see below) |
 
 `query` uses Gmail's search syntax (e.g. `"from:customer@example.com
 newer_than:14d"`). `send` refuses outright — even after approval — if
@@ -68,9 +76,9 @@ similar); see `gmail_tool.py`'s `RESERVED_PLACEHOLDER_DOMAINS`.
 
 | Route | Kind | Request body | Returns |
 |---|---|---|---|
-| `POST /tools/calendar/search` | read | `{process_id, query?, time_min?, time_max?, max_results?: 10}` | `[{event_id, title, start, end, attendees, location}, ...]` |
-| `POST /tools/calendar/read` | read | `{process_id, event_id}` | `{event_id, title, start, end, attendees, location}` |
-| `POST /tools/calendar/create-event` | **write** | `{process_id, title, start, end, attendees?, location?}` | `RunOutcomeResponse` |
+| `POST /tools/calendar/search` | read | `{process_id?, query?, time_min?, time_max?, max_results?: 10}` | `[{event_id, title, start, end, attendees, location}, ...]` |
+| `POST /tools/calendar/read` | read | `{process_id?, event_id}` | `{event_id, title, start, end, attendees, location}` |
+| `POST /tools/calendar/create-event` | **write** | `{process_id?, title, start, end, attendees?, location?}` | `RunOutcomeResponse` |
 
 `start`/`end` are RFC3339 datetimes (e.g. `"2026-09-10T15:00:00Z"`).
 Only single, non-recurring events — no recurrence support.
@@ -79,9 +87,9 @@ Only single, non-recurring events — no recurrence support.
 
 | Route | Kind | Request body | Returns |
 |---|---|---|---|
-| `POST /tools/excel/worksheets` | read | `{process_id}` | `["Sheet1", "Renewals", ...]` |
-| `POST /tools/excel/read` | read | `{process_id, sheet_name?, address?}` | `{sheet_name, address, values: [[...], ...]}` |
-| `POST /tools/excel/write` | **write** | `{process_id, sheet_name, address, values: [[...], ...]}` | `RunOutcomeResponse` |
+| `POST /tools/excel/worksheets` | read | `{process_id?}` | `["Sheet1", "Renewals", ...]` |
+| `POST /tools/excel/read` | read | `{process_id?, sheet_name?, address?}` | `{sheet_name, address, values: [[...], ...]}` |
+| `POST /tools/excel/write` | **write** | `{process_id?, sheet_name, address, values: [[...], ...]}` | `RunOutcomeResponse` |
 
 One workbook per running server (`APM_EXCEL_WORKBOOK_PATH` or
 `APM_EXCEL_DRIVE_FILE_ID` — see `docs/capability-map.md`); if neither
@@ -91,11 +99,17 @@ omitted — pass them explicitly for anything more specific.
 
 ## Approving or rejecting a write
 
-Every write route above returns a paused `RunOutcomeResponse`:
+Every write route above returns a paused `RunOutcomeResponse`. Its
+`action_id` is the id to use for the decision call — the server
+generated it here because this example's `/tools/gmail/send` call
+didn't pass a `process_id`; had it passed one, `action_id` would be
+that value instead. Either way, the caller takes `action_id` from
+*this* response — it's never something to construct or guess in
+advance:
 
 ```json
 {
-  "process_id": "order-4521",
+  "action_id": "3f0a9e21-6b7a-4e3d-9c0e-2a5f6d8b1c44",
   "summary": null,
   "pending_action": {
     "type": "approval_request",
@@ -113,7 +127,7 @@ Every write route above returns a paused `RunOutcomeResponse`:
 Resolve it with:
 
 ```
-POST /tools/actions/{process_id}/decision
+POST /tools/actions/{action_id}/decision
 {"approved": true}
 ```
 
@@ -122,7 +136,7 @@ null`):
 
 ```json
 {
-  "process_id": "order-4521",
+  "action_id": "3f0a9e21-6b7a-4e3d-9c0e-2a5f6d8b1c44",
   "summary": null,
   "pending_action": null,
   "final_result": {
@@ -138,6 +152,29 @@ On rejection: `final_result: {"executed": false, "reason": "rejected"}`
 
 ## Worked example (Gmail send)
 
+Without a `process_id` — the common case for a calling agent that has
+no APM-internal id to give:
+
+```
+POST /tools/gmail/search
+{"query": "newer_than:14d order 4521"}
+→ 200, list of matching emails
+
+POST /tools/gmail/send
+{"to": "customer@realcorp.io", "subject": "Update", "body": "Your order is delayed."}
+→ 200, pending_action set, action_id: "3f0a9e21-…" — nothing sent yet
+
+...human approves...
+
+POST /tools/actions/3f0a9e21-…/decision
+{"approved": true}
+→ 200, final_result.executed == true — now it's actually sent
+```
+
+With a `process_id` — when the caller *does* want related calls
+grouped under one audit-trail thread (e.g. a reasoning layer that
+tracks its own case ids and wants them to double as the APM one):
+
 ```
 POST /tools/gmail/search
 {"process_id": "order-4521", "query": "newer_than:14d order 4521"}
@@ -145,18 +182,19 @@ POST /tools/gmail/search
 
 POST /tools/gmail/send
 {"process_id": "order-4521", "to": "customer@realcorp.io", "subject": "Update", "body": "Your order is delayed."}
-→ 200, pending_action set — nothing sent yet
+→ 200, pending_action set, action_id: "order-4521" (echoes process_id back verbatim)
 
 ...human approves...
 
 POST /tools/actions/order-4521/decision
 {"approved": true}
-→ 200, final_result.executed == true — now it's actually sent
+→ 200, final_result.executed == true
 ```
 
-`GET /processes/{process_id}/history` and `GET
-/processes/{process_id}/pending` work the same for any process id — the
-audit trail and pending-action store are shared infrastructure
+`GET /processes/{id}/history` and `GET /processes/{id}/pending` work
+the same for any id — whichever `process_id`/`action_id` string ended
+up being used, caller-supplied or generated — since the audit trail and
+pending-action store are shared infrastructure
 (`src/apm_connectors/state/store.py`).
 
 ## Stability

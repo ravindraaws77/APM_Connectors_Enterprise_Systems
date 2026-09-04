@@ -4,9 +4,12 @@ wired to fake clients (same fixtures as tests/test_api.py), injected via
 FastAPI's dependency_overrides, so no live credentials are needed.
 
 Covers: reads return data immediately; a write pauses for approval and
-does not execute until POST /tools/actions/{id}/decision approves it;
-rejecting doesn't execute; a tool that isn't configured on this server
-returns a clean 503 rather than a crash.
+does not execute until POST /tools/actions/{action_id}/decision
+approves it; rejecting doesn't execute; a tool that isn't configured on
+this server returns a clean 503 rather than a crash; process_id is
+optional everywhere -- omitting it still works, with the server
+generating an id used for audit logging (reads) or handed back as
+action_id (writes).
 """
 
 from pathlib import Path
@@ -77,6 +80,23 @@ def test_unconfigured_tool_returns_503(tmp_path: Path) -> None:
     assert response.status_code == 503
 
 
+def test_read_without_process_id_still_works_and_is_logged(tmp_path: Path) -> None:
+    """process_id is optional -- a caller with no internal id of its own
+    can just omit it. The server generates one internally so the read
+    is still on the audit trail, just not grouped under a caller-chosen
+    label.
+    """
+    message = _raw_message("m1", sender="a@b.com", subject="Hi", snippet="hello", date="2026-09-01")
+    client, store, *_ = _client(tmp_path, gmail_messages=[message])
+
+    response = client.post("/tools/gmail/search", json={"query": "newer_than:7d"})
+
+    assert response.status_code == 200
+    assert len(response.json()) == 1
+    all_events = store.list_events()
+    assert any(e["event_type"] == "read" and e["tool"] == "gmail" for e in all_events)
+
+
 # -- writes: propose -> approve/reject -----------------------------------
 
 
@@ -101,6 +121,29 @@ def test_gmail_send_pauses_for_approval_then_executes(tmp_path: Path) -> None:
     assert outcome["final_result"]["executed"] is True
     assert len(gmail_client.sent) == 1
     assert store.list_pending_actions("order-2") == []
+
+
+def test_gmail_send_without_process_id_returns_a_generated_action_id(tmp_path: Path) -> None:
+    """The common case for a calling agent with no APM-internal id: omit
+    process_id entirely. The server generates one, returns it as
+    action_id, and that's what resolves the decision.
+    """
+    client, store, gmail_client, _, _ = _client(tmp_path)
+
+    propose = client.post(
+        "/tools/gmail/send",
+        json={"to": "customer@realcorp.io", "subject": "Update", "body": "Hi there."},
+    )
+    assert propose.status_code == 200
+    action_id = propose.json()["action_id"]
+    assert action_id  # server-generated, non-empty
+    assert len(store.list_pending_actions(action_id)) == 1
+
+    decide = client.post(f"/tools/actions/{action_id}/decision", json={"approved": True})
+
+    assert decide.status_code == 200
+    assert decide.json()["final_result"]["executed"] is True
+    assert len(gmail_client.sent) == 1
 
 
 def test_gmail_send_rejected_does_not_execute(tmp_path: Path) -> None:

@@ -34,7 +34,7 @@ target state.
 **This is the non-negotiable rule for this package:** a tool's `read`
 capability can run whenever a caller needs it. A tool's `write` or
 `action` capability can **only** run after an explicit human decision
-(`POST /tools/actions/{process_id}/decision`, `approved: true` — see
+(`POST /tools/actions/{action_id}/decision`, `approved: true` — see
 `docs/api-contract.md`). There is no code path here that sends an email,
 creates a calendar event, or writes a spreadsheet row without that step.
 This is implemented, not aspirational: `src/apm_connectors/graph.py`'s
