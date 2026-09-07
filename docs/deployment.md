@@ -94,22 +94,26 @@ terraform apply
 The build/push step re-runs automatically — its trigger is a content
 hash of `src/` and the `Dockerfile`, so it only rebuilds when something
 that would actually change the image has changed. Unlike App Runner,
-ECS does **not** auto-detect a new image at the same tag on its own;
-force a fresh deployment of the existing service after the push:
-
-```
-aws ecs update-service --cluster apm-connectors --service apm-connectors --force-new-deployment
-```
+ECS does **not** auto-detect a new image at the same tag on its own —
+but `terraform apply` handles this itself
+(`null_resource.force_new_deployment` forces a fresh deployment
+whenever the build/push step re-runs), so no separate manual
+`aws ecs update-service --force-new-deployment` step is needed.
 
 ## Changing connector configuration
 
-Edit `terraform.tfvars` and re-run `terraform apply` — this changes the
-task definition, which triggers ECS to roll a new deployment
-automatically (no separate `force-new-deployment` needed in this case,
-since the task definition itself changed). Secrets go into SSM as
-`SecureString`s and are read by the container at startup; the
-non-secret values (client IDs, tenant id, workbook path/Drive file id)
-are set directly as plain environment variables in the task definition.
+Edit `terraform.tfvars` (client IDs, tenant id, workbook path/Drive
+file id, or any of the secret values) and re-run `terraform apply`.
+Secrets go into SSM as `SecureString`s and are read by the container at
+startup; non-secret values are set directly as plain environment
+variables in the task definition.
+
+Changing a *secret's value* (e.g. rotating `GOOGLE_TOKEN_JSON` — see
+"Enabling real Gmail/Calendar" below) only updates the SSM parameter's
+value, not its ARN, which the task definition doesn't see as a change
+on its own. `terraform apply` handles this the same way as an image
+update — `null_resource.force_new_deployment` forces the redeploy the
+task definition's own diff wouldn't have triggered.
 
 ## Enabling real Gmail/Calendar on this deployment
 

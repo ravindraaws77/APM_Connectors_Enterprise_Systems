@@ -344,3 +344,44 @@ resource "aws_ecs_service" "this" {
     container_port   = 8000
   }
 }
+
+# Two things Terraform's normal change detection can't see, both of
+# which leave a stale, already-running task in place unless something
+# explicitly forces a redeploy:
+#   1. A new image pushed to the same ":latest" tag in ECR
+#      (null_resource.docker_build_push re-running) -- the task
+#      definition's `image` string is unchanged, so nothing about it
+#      looks different to Terraform.
+#   2. An SSM SecureString's *value* changing in place -- its ARN,
+#      which is all the task definition's `secrets` block references,
+#      doesn't change either. ECS also only resolves `secrets` once,
+#      at task startup, so an already-running task never re-reads it
+#      even if you did notice and go looking.
+# Force a fresh deployment whenever either happens, so `terraform
+# apply` alone is enough -- no separate manual `aws ecs update-service
+# --force-new-deployment` step for either case.
+resource "null_resource" "force_new_deployment" {
+  depends_on = [aws_ecs_service.this, null_resource.docker_build_push]
+
+  triggers = {
+    source_hash     = local.source_hash
+    dockerfile_hash = local.dockerfile_hash
+    secrets_hash = sha1(join("", [
+      var.google_client_secret,
+      var.ms_graph_client_secret,
+      var.google_token_json,
+    ]))
+  }
+
+  provisioner "local-exec" {
+    interpreter = ["bash", "-c"]
+    command = replace(<<-EOT
+      set -euo pipefail
+      aws ecs update-service --region ${var.aws_region} \
+        --cluster ${aws_ecs_cluster.this.name} \
+        --service ${aws_ecs_service.this.name} \
+        --force-new-deployment >/dev/null
+    EOT
+    , "\r\n", "\n")
+  }
+}
