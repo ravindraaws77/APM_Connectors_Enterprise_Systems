@@ -1,0 +1,11 @@
+# Force LF regardless of core.autocrlf on the checkout machine.
+# infra/aws/apprunner/main.tf embeds a bash script in a Terraform
+# heredoc (the ECR build/push local-exec step) -- a Windows checkout
+# with the default core.autocrlf=true rewrites LF to CRLF, which
+# corrupts that script when bash runs it. Applies to all shell-bearing
+# text here, not just that one file, since the same corruption would
+# hit any future one the same way.
+*.tf text eol=lf
+*.tfvars text eol=lf
+*.sh text eol=lf
+Dockerfile text eol=lf
