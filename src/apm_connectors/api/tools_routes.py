@@ -41,6 +41,10 @@ from apm_connectors.api.schemas import (
     GmailReadRequest,
     GmailSearchRequest,
     GmailSendRequest,
+    JiraCreateRequest,
+    JiraReadRequest,
+    JiraSearchRequest,
+    JiraUpdateRequest,
     RunOutcomeResponse,
     SalesforceCreateRequest,
     SalesforceQueryRequest,
@@ -250,6 +254,57 @@ def salesforce_update(
     description = f"Update Salesforce {body.object_name} record {body.record_id}"
     payload = {"object_name": body.object_name, "record_id": body.record_id, "fields": body.fields}
     return _propose(graph, action_id, "salesforce", "update_record", description, payload)
+
+
+# -- Jira -----------------------------------------------------------------
+
+
+@router.post("/jira/search")
+def jira_search(body: JiraSearchRequest, tools: dict[str, BaseTool] = Depends(get_tools)) -> list[dict]:
+    tool = _tool(tools, "jira")
+    process_id = _resolve_process_id(body.process_id)
+    try:
+        results = tool.search_issues(process_id, jql=body.jql, max_results=body.max_results)
+    except Exception as exc:
+        raise upstream_error(exc) from exc
+    return [r.__dict__ for r in results]
+
+
+@router.post("/jira/read")
+def jira_read(body: JiraReadRequest, tools: dict[str, BaseTool] = Depends(get_tools)) -> dict:
+    tool = _tool(tools, "jira")
+    process_id = _resolve_process_id(body.process_id)
+    try:
+        result = tool.get_issue(process_id, issue_key=body.issue_key)
+    except Exception as exc:
+        raise upstream_error(exc) from exc
+    return result.__dict__
+
+
+@router.post("/jira/create", response_model=RunOutcomeResponse)
+def jira_create(
+    body: JiraCreateRequest,
+    tools: dict[str, BaseTool] = Depends(get_tools),
+    graph=Depends(get_action_graph),
+) -> RunOutcomeResponse:
+    _tool(tools, "jira")  # fail fast, before recording a pending action doomed to fail on approval
+    action_id = _resolve_process_id(body.process_id)
+    description = "Create Jira issue"
+    payload = {"fields": body.fields}
+    return _propose(graph, action_id, "jira", "create_issue", description, payload)
+
+
+@router.post("/jira/update", response_model=RunOutcomeResponse)
+def jira_update(
+    body: JiraUpdateRequest,
+    tools: dict[str, BaseTool] = Depends(get_tools),
+    graph=Depends(get_action_graph),
+) -> RunOutcomeResponse:
+    _tool(tools, "jira")
+    action_id = _resolve_process_id(body.process_id)
+    description = f"Update Jira issue {body.issue_key}"
+    payload = {"issue_key": body.issue_key, "fields": body.fields}
+    return _propose(graph, action_id, "jira", "update_issue", description, payload)
 
 
 # -- Shared decision route for every /tools/* write above -------------------

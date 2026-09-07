@@ -24,15 +24,21 @@ from apm_connectors.state.store import StateStore
 from apm_connectors.tools.calendar_tool import CalendarTool
 from apm_connectors.tools.excel_file_tool import ExcelFileTool
 from apm_connectors.tools.gmail_tool import GmailTool
+from apm_connectors.tools.jira_tool import JiraTool
 from apm_connectors.tools.salesforce_tool import SalesforceTool
 from tests.test_calendar_tool import FakeCalendarClient
 from tests.test_excel_file_tool import FakeWorkbookSource, _sample_workbook_bytes
 from tests.test_gmail_tool import FakeGmailClient, _raw_message
+from tests.test_jira_tool import FakeJiraClient, _raw_issue
 from tests.test_salesforce_tool import FakeSalesforceClient, _raw_record
 
 
 def _client(
-    tmp_path: Path, with_excel: bool = True, with_salesforce: bool = True, gmail_messages: list | None = None
+    tmp_path: Path,
+    with_excel: bool = True,
+    with_salesforce: bool = True,
+    with_jira: bool = True,
+    gmail_messages: list | None = None,
 ):
     store = StateStore(tmp_path / "state.json")
     gmail_client = FakeGmailClient(gmail_messages or [])
@@ -51,12 +57,16 @@ def _client(
             [_raw_record("006abc", "Opportunity", Name="Acme Renewal", StageName="Negotiation")]
         )
         tools["salesforce"] = SalesforceTool(store, salesforce_client)
+    jira_client = None
+    if with_jira:
+        jira_client = FakeJiraClient([_raw_issue("OPS-1", "Bug", summary="Payments failing")])
+        tools["jira"] = JiraTool(store, jira_client)
     action_graph = build_action_graph(tools, store, checkpointer=MemorySaver())
 
     app = create_app()
     app.dependency_overrides[get_tools] = lambda: tools
     app.dependency_overrides[get_action_graph] = lambda: action_graph
-    return TestClient(app), store, gmail_client, calendar_client, excel_source, salesforce_client
+    return TestClient(app), store, gmail_client, calendar_client, excel_source, salesforce_client, jira_client
 
 
 # -- reads --------------------------------------------------------------
@@ -64,7 +74,7 @@ def _client(
 
 def test_gmail_search_returns_data_immediately(tmp_path: Path) -> None:
     message = _raw_message("m1", sender="a@b.com", subject="Hi", snippet="hello", date="2026-09-01")
-    client, store, gmail_client, _, _, _ = _client(tmp_path, gmail_messages=[message])
+    client, store, gmail_client, _, _, _, _ = _client(tmp_path, gmail_messages=[message])
 
     response = client.post("/tools/gmail/search", json={"process_id": "order-1", "query": "newer_than:7d"})
 
@@ -111,7 +121,7 @@ def test_read_without_process_id_still_works_and_is_logged(tmp_path: Path) -> No
 
 
 def test_gmail_send_pauses_for_approval_then_executes(tmp_path: Path) -> None:
-    client, store, gmail_client, _, _, _ = _client(tmp_path)
+    client, store, gmail_client, _, _, _, _ = _client(tmp_path)
 
     propose = client.post(
         "/tools/gmail/send",
@@ -138,7 +148,7 @@ def test_gmail_send_without_process_id_returns_a_generated_action_id(tmp_path: P
     process_id entirely. The server generates one, returns it as
     action_id, and that's what resolves the decision.
     """
-    client, store, gmail_client, _, _, _ = _client(tmp_path)
+    client, store, gmail_client, _, _, _, _ = _client(tmp_path)
 
     propose = client.post(
         "/tools/gmail/send",
@@ -157,7 +167,7 @@ def test_gmail_send_without_process_id_returns_a_generated_action_id(tmp_path: P
 
 
 def test_gmail_send_rejected_does_not_execute(tmp_path: Path) -> None:
-    client, store, gmail_client, _, _, _ = _client(tmp_path)
+    client, store, gmail_client, _, _, _, _ = _client(tmp_path)
     client.post(
         "/tools/gmail/send",
         json={"process_id": "order-3", "to": "customer@realcorp.io", "subject": "Update", "body": "Hi there."},
@@ -172,7 +182,7 @@ def test_gmail_send_rejected_does_not_execute(tmp_path: Path) -> None:
 
 
 def test_calendar_create_event_gated(tmp_path: Path) -> None:
-    client, store, _, calendar_client, _, _ = _client(tmp_path)
+    client, store, _, calendar_client, _, _, _ = _client(tmp_path)
 
     propose = client.post(
         "/tools/calendar/create-event",
@@ -188,7 +198,7 @@ def test_calendar_create_event_gated(tmp_path: Path) -> None:
 
 
 def test_excel_write_gated(tmp_path: Path) -> None:
-    client, store, _, _, excel_source, _ = _client(tmp_path)
+    client, store, _, _, excel_source, _, _ = _client(tmp_path)
 
     propose = client.post(
         "/tools/excel/write",
@@ -253,7 +263,7 @@ def test_salesforce_unconfigured_returns_503(tmp_path: Path) -> None:
 
 
 def test_salesforce_create_gated(tmp_path: Path) -> None:
-    client, store, _, _, _, salesforce_client = _client(tmp_path)
+    client, store, _, _, _, salesforce_client, _ = _client(tmp_path)
 
     propose = client.post(
         "/tools/salesforce/create",
@@ -270,7 +280,7 @@ def test_salesforce_create_gated(tmp_path: Path) -> None:
 
 
 def test_salesforce_update_gated(tmp_path: Path) -> None:
-    client, store, _, _, _, salesforce_client = _client(tmp_path)
+    client, store, _, _, _, salesforce_client, _ = _client(tmp_path)
 
     propose = client.post(
         "/tools/salesforce/update",
@@ -288,3 +298,74 @@ def test_salesforce_update_gated(tmp_path: Path) -> None:
     assert decide.status_code == 200
     assert decide.json()["final_result"] == {"executed": False, "reason": "rejected"}
     assert salesforce_client.updated == []
+
+
+# -- Jira -------------------------------------------------------------------
+
+
+def test_jira_search_returns_data_immediately(tmp_path: Path) -> None:
+    client, store, *_ = _client(tmp_path)
+
+    response = client.post(
+        "/tools/jira/search",
+        json={"process_id": "order-10", "jql": "project = OPS"},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert len(body) == 1
+    assert body[0]["issue_key"] == "OPS-1"
+    assert any(e["event_type"] == "read" and e["tool"] == "jira" for e in store.list_events("order-10"))
+
+
+def test_jira_read(tmp_path: Path) -> None:
+    client, *_ = _client(tmp_path)
+
+    response = client.post("/tools/jira/read", json={"issue_key": "OPS-1"})
+
+    assert response.status_code == 200
+    assert response.json()["issue_key"] == "OPS-1"
+
+
+def test_jira_unconfigured_returns_503(tmp_path: Path) -> None:
+    client, *_ = _client(tmp_path, with_jira=False)
+
+    response = client.post("/tools/jira/search", json={"jql": "project = OPS"})
+
+    assert response.status_code == 503
+
+
+def test_jira_create_gated(tmp_path: Path) -> None:
+    client, store, _, _, _, _, jira_client = _client(tmp_path)
+
+    propose = client.post(
+        "/tools/jira/create",
+        json={
+            "process_id": "order-11",
+            "fields": {"project": {"key": "OPS"}, "summary": "Fix the thing", "issuetype": {"name": "Bug"}},
+        },
+    )
+    assert propose.status_code == 200
+    assert propose.json()["pending_action"]["tool"] == "jira"
+    assert jira_client.created == []
+
+    decide = client.post("/tools/actions/order-11/decision", json={"approved": True})
+    assert decide.status_code == 200
+    assert decide.json()["final_result"]["executed"] is True
+    assert len(jira_client.created) == 1
+
+
+def test_jira_update_gated(tmp_path: Path) -> None:
+    client, store, _, _, _, _, jira_client = _client(tmp_path)
+
+    propose = client.post(
+        "/tools/jira/update",
+        json={"process_id": "order-12", "issue_key": "OPS-1", "fields": {"summary": "Updated title"}},
+    )
+    assert propose.status_code == 200
+    assert jira_client.updated == []
+
+    decide = client.post("/tools/actions/order-12/decision", json={"approved": False})
+    assert decide.status_code == 200
+    assert decide.json()["final_result"] == {"executed": False, "reason": "rejected"}
+    assert jira_client.updated == []

@@ -124,3 +124,25 @@ class SalesforceUpdateRequest(BaseModel):
     object_name: str
     record_id: str
     fields: dict[str, Any]
+
+
+class JiraSearchRequest(BaseModel):
+    process_id: str | None = None
+    jql: str
+    max_results: int = 50
+
+
+class JiraReadRequest(BaseModel):
+    process_id: str | None = None
+    issue_key: str
+
+
+class JiraCreateRequest(BaseModel):
+    process_id: str | None = None
+    fields: dict[str, Any]
+
+
+class JiraUpdateRequest(BaseModel):
+    process_id: str | None = None
+    issue_key: str
+    fields: dict[str, Any]

@@ -15,8 +15,8 @@ running elsewhere:
     APM_CONNECTORS_BASE_URL=http://127.0.0.1:8000 apm-connectors-mcp
 
 Every write tool (gmail_send, calendar_create_event, excel_write,
-salesforce_create, salesforce_update) mirrors the REST API exactly: it
-does not execute anything -- it
+salesforce_create, salesforce_update, jira_create, jira_update) mirrors
+the REST API exactly: it does not execute anything -- it
 returns a paused action_id, and the agent must call
 decide_action(action_id, approved=True) to actually run it. That gate
 is enforced server-side in the /tools/* API regardless of what this
@@ -241,15 +241,59 @@ def build_server(client: ConnectorClient, name: str = "apm-connectors") -> MCPSe
             {"object_name": object_name, "record_id": record_id, "fields": fields, "process_id": process_id},
         )
 
+    # -- Jira -----------------------------------------------------------------
+
+    @mcp.tool()
+    async def jira_search(jql: str, max_results: int = 50, process_id: str | None = None) -> list[dict]:
+        """Run a read-only Jira JQL search, e.g. "project = OPS AND
+        status = 'In Progress' ORDER BY updated DESC". Cap result size
+        with max_results. Read-only: executes immediately, no approval
+        needed.
+        """
+        return await _call(
+            "/tools/jira/search", {"jql": jql, "max_results": max_results, "process_id": process_id}
+        )
+
+    @mcp.tool()
+    async def jira_read(issue_key: str, process_id: str | None = None) -> dict[str, Any]:
+        """Read one Jira issue by its key (e.g. "OPS-42", from
+        jira_search's results). Read-only: executes immediately.
+        """
+        return await _call("/tools/jira/read", {"issue_key": issue_key, "process_id": process_id})
+
+    @mcp.tool()
+    async def jira_create(fields: dict[str, Any], process_id: str | None = None) -> dict[str, Any]:
+        """Propose creating a new Jira issue. `fields` is the Jira
+        `fields` payload as-is, e.g. {"project": {"key": "OPS"},
+        "summary": "Fix the thing", "issuetype": {"name": "Bug"}}. This
+        does NOT create anything -- it pauses for human approval and
+        returns action_id in the response. Call decide_action with that
+        action_id and approved=true to actually create it, or
+        approved=false to discard it.
+        """
+        return await _call("/tools/jira/create", {"fields": fields, "process_id": process_id})
+
+    @mcp.tool()
+    async def jira_update(issue_key: str, fields: dict[str, Any], process_id: str | None = None) -> dict[str, Any]:
+        """Propose updating an existing Jira issue's fields, e.g.
+        issue_key="OPS-42", fields={"summary": "Updated title"}. This
+        does NOT update anything -- it pauses for approval and returns
+        action_id; call decide_action to resolve it.
+        """
+        return await _call(
+            "/tools/jira/update", {"issue_key": issue_key, "fields": fields, "process_id": process_id}
+        )
+
     # -- Shared decision route for every write above -------------------------
 
     @mcp.tool()
     async def decide_action(action_id: str, approved: bool) -> dict[str, Any]:
         """Approve or reject a pending write proposed by gmail_send,
-        calendar_create_event, or excel_write (its action_id from that
-        call's response). Nothing in the real system happens until
-        this is called with approved=true; approved=false discards it
-        -- nothing is sent/created/written either way.
+        calendar_create_event, excel_write, salesforce_create/update, or
+        jira_create/update (its action_id from that call's response).
+        Nothing in the real system happens until this is called with
+        approved=true; approved=false discards it -- nothing is
+        sent/created/written either way.
         """
         return await _call(f"/tools/actions/{action_id}/decision", {"approved": approved})
 
