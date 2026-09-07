@@ -42,6 +42,10 @@ from apm_connectors.api.schemas import (
     GmailSearchRequest,
     GmailSendRequest,
     RunOutcomeResponse,
+    SalesforceCreateRequest,
+    SalesforceQueryRequest,
+    SalesforceReadRequest,
+    SalesforceUpdateRequest,
 )
 from apm_connectors.graph import resume_process, start_action
 from apm_connectors.tools.base import BaseTool
@@ -195,6 +199,57 @@ def excel_write(
     description = f"Write {len(body.values)} row(s) to {body.sheet_name}!{body.address}"
     payload = {"sheet_name": body.sheet_name, "address": body.address, "values": body.values}
     return _propose(graph, action_id, "excel_file", "write_range", description, payload)
+
+
+# -- Salesforce ---------------------------------------------------------
+
+
+@router.post("/salesforce/query")
+def salesforce_query(body: SalesforceQueryRequest, tools: dict[str, BaseTool] = Depends(get_tools)) -> list[dict]:
+    tool = _tool(tools, "salesforce")
+    process_id = _resolve_process_id(body.process_id)
+    try:
+        results = tool.query_records(process_id, soql=body.soql)
+    except Exception as exc:
+        raise upstream_error(exc) from exc
+    return [r.__dict__ for r in results]
+
+
+@router.post("/salesforce/read")
+def salesforce_read(body: SalesforceReadRequest, tools: dict[str, BaseTool] = Depends(get_tools)) -> dict:
+    tool = _tool(tools, "salesforce")
+    process_id = _resolve_process_id(body.process_id)
+    try:
+        result = tool.get_record(process_id, object_name=body.object_name, record_id=body.record_id)
+    except Exception as exc:
+        raise upstream_error(exc) from exc
+    return result.__dict__
+
+
+@router.post("/salesforce/create", response_model=RunOutcomeResponse)
+def salesforce_create(
+    body: SalesforceCreateRequest,
+    tools: dict[str, BaseTool] = Depends(get_tools),
+    graph=Depends(get_action_graph),
+) -> RunOutcomeResponse:
+    _tool(tools, "salesforce")  # fail fast, before recording a pending action doomed to fail on approval
+    action_id = _resolve_process_id(body.process_id)
+    description = f"Create Salesforce {body.object_name} record"
+    payload = {"object_name": body.object_name, "fields": body.fields}
+    return _propose(graph, action_id, "salesforce", "create_record", description, payload)
+
+
+@router.post("/salesforce/update", response_model=RunOutcomeResponse)
+def salesforce_update(
+    body: SalesforceUpdateRequest,
+    tools: dict[str, BaseTool] = Depends(get_tools),
+    graph=Depends(get_action_graph),
+) -> RunOutcomeResponse:
+    _tool(tools, "salesforce")
+    action_id = _resolve_process_id(body.process_id)
+    description = f"Update Salesforce {body.object_name} record {body.record_id}"
+    payload = {"object_name": body.object_name, "record_id": body.record_id, "fields": body.fields}
+    return _propose(graph, action_id, "salesforce", "update_record", description, payload)
 
 
 # -- Shared decision route for every /tools/* write above -------------------

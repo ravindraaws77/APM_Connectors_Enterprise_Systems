@@ -100,3 +100,27 @@ class ExcelWriteRequest(BaseModel):
     sheet_name: str
     address: str
     values: list[list[Any]]
+
+
+class SalesforceQueryRequest(BaseModel):
+    process_id: str | None = None
+    soql: str
+
+
+class SalesforceReadRequest(BaseModel):
+    process_id: str | None = None
+    object_name: str
+    record_id: str
+
+
+class SalesforceCreateRequest(BaseModel):
+    process_id: str | None = None
+    object_name: str
+    fields: dict[str, Any]
+
+
+class SalesforceUpdateRequest(BaseModel):
+    process_id: str | None = None
+    object_name: str
+    record_id: str
+    fields: dict[str, Any]

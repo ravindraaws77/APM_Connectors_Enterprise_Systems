@@ -44,6 +44,10 @@ class Settings:
     # (e.g. test fixtures predating this field) doesn't break -- a dataclass
     # field with a default must come after every field without one.
     google_token_json: str | None = None
+    salesforce_client_id: str | None = None
+    salesforce_client_secret: str | None = None
+    salesforce_domain: str | None = None
+    salesforce_api_version: str | None = None
 
 
 def load_settings() -> Settings:
@@ -57,4 +61,8 @@ def load_settings() -> Settings:
         excel_workbook_path=os.environ.get("APM_EXCEL_WORKBOOK_PATH"),
         excel_drive_file_id=os.environ.get("APM_EXCEL_DRIVE_FILE_ID"),
         state_dir=STATE_DIR,
+        salesforce_client_id=os.environ.get("SALESFORCE_CLIENT_ID"),
+        salesforce_client_secret=os.environ.get("SALESFORCE_CLIENT_SECRET"),
+        salesforce_domain=os.environ.get("SALESFORCE_DOMAIN"),
+        salesforce_api_version=os.environ.get("SALESFORCE_API_VERSION"),
     )

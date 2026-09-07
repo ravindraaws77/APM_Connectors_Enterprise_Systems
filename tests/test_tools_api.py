@@ -24,12 +24,16 @@ from apm_connectors.state.store import StateStore
 from apm_connectors.tools.calendar_tool import CalendarTool
 from apm_connectors.tools.excel_file_tool import ExcelFileTool
 from apm_connectors.tools.gmail_tool import GmailTool
+from apm_connectors.tools.salesforce_tool import SalesforceTool
 from tests.test_calendar_tool import FakeCalendarClient
 from tests.test_excel_file_tool import FakeWorkbookSource, _sample_workbook_bytes
 from tests.test_gmail_tool import FakeGmailClient, _raw_message
+from tests.test_salesforce_tool import FakeSalesforceClient, _raw_record
 
 
-def _client(tmp_path: Path, with_excel: bool = True, gmail_messages: list | None = None):
+def _client(
+    tmp_path: Path, with_excel: bool = True, with_salesforce: bool = True, gmail_messages: list | None = None
+):
     store = StateStore(tmp_path / "state.json")
     gmail_client = FakeGmailClient(gmail_messages or [])
     calendar_client = FakeCalendarClient([])
@@ -41,12 +45,18 @@ def _client(tmp_path: Path, with_excel: bool = True, gmail_messages: list | None
     if with_excel:
         excel_source = FakeWorkbookSource(_sample_workbook_bytes())
         tools["excel_file"] = ExcelFileTool(store, excel_source)
+    salesforce_client = None
+    if with_salesforce:
+        salesforce_client = FakeSalesforceClient(
+            [_raw_record("006abc", "Opportunity", Name="Acme Renewal", StageName="Negotiation")]
+        )
+        tools["salesforce"] = SalesforceTool(store, salesforce_client)
     action_graph = build_action_graph(tools, store, checkpointer=MemorySaver())
 
     app = create_app()
     app.dependency_overrides[get_tools] = lambda: tools
     app.dependency_overrides[get_action_graph] = lambda: action_graph
-    return TestClient(app), store, gmail_client, calendar_client, excel_source
+    return TestClient(app), store, gmail_client, calendar_client, excel_source, salesforce_client
 
 
 # -- reads --------------------------------------------------------------
@@ -54,7 +64,7 @@ def _client(tmp_path: Path, with_excel: bool = True, gmail_messages: list | None
 
 def test_gmail_search_returns_data_immediately(tmp_path: Path) -> None:
     message = _raw_message("m1", sender="a@b.com", subject="Hi", snippet="hello", date="2026-09-01")
-    client, store, gmail_client, _, _ = _client(tmp_path, gmail_messages=[message])
+    client, store, gmail_client, _, _, _ = _client(tmp_path, gmail_messages=[message])
 
     response = client.post("/tools/gmail/search", json={"process_id": "order-1", "query": "newer_than:7d"})
 
@@ -101,7 +111,7 @@ def test_read_without_process_id_still_works_and_is_logged(tmp_path: Path) -> No
 
 
 def test_gmail_send_pauses_for_approval_then_executes(tmp_path: Path) -> None:
-    client, store, gmail_client, _, _ = _client(tmp_path)
+    client, store, gmail_client, _, _, _ = _client(tmp_path)
 
     propose = client.post(
         "/tools/gmail/send",
@@ -128,7 +138,7 @@ def test_gmail_send_without_process_id_returns_a_generated_action_id(tmp_path: P
     process_id entirely. The server generates one, returns it as
     action_id, and that's what resolves the decision.
     """
-    client, store, gmail_client, _, _ = _client(tmp_path)
+    client, store, gmail_client, _, _, _ = _client(tmp_path)
 
     propose = client.post(
         "/tools/gmail/send",
@@ -147,7 +157,7 @@ def test_gmail_send_without_process_id_returns_a_generated_action_id(tmp_path: P
 
 
 def test_gmail_send_rejected_does_not_execute(tmp_path: Path) -> None:
-    client, store, gmail_client, _, _ = _client(tmp_path)
+    client, store, gmail_client, _, _, _ = _client(tmp_path)
     client.post(
         "/tools/gmail/send",
         json={"process_id": "order-3", "to": "customer@realcorp.io", "subject": "Update", "body": "Hi there."},
@@ -162,7 +172,7 @@ def test_gmail_send_rejected_does_not_execute(tmp_path: Path) -> None:
 
 
 def test_calendar_create_event_gated(tmp_path: Path) -> None:
-    client, store, _, calendar_client, _ = _client(tmp_path)
+    client, store, _, calendar_client, _, _ = _client(tmp_path)
 
     propose = client.post(
         "/tools/calendar/create-event",
@@ -178,7 +188,7 @@ def test_calendar_create_event_gated(tmp_path: Path) -> None:
 
 
 def test_excel_write_gated(tmp_path: Path) -> None:
-    client, store, _, _, excel_source = _client(tmp_path)
+    client, store, _, _, excel_source, _ = _client(tmp_path)
 
     propose = client.post(
         "/tools/excel/write",
@@ -202,3 +212,79 @@ def test_write_to_unconfigured_tool_returns_503_without_creating_a_pending_actio
 
     assert response.status_code == 503
     assert store.list_pending_actions("order-6") == []
+
+
+# -- Salesforce -----------------------------------------------------------
+
+
+def test_salesforce_query_returns_data_immediately(tmp_path: Path) -> None:
+    client, store, *_ = _client(tmp_path)
+
+    response = client.post(
+        "/tools/salesforce/query",
+        json={"process_id": "order-7", "soql": "SELECT Id, Name FROM Opportunity"},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert len(body) == 1
+    assert body[0]["record_id"] == "006abc"
+    assert any(e["event_type"] == "read" and e["tool"] == "salesforce" for e in store.list_events("order-7"))
+
+
+def test_salesforce_read(tmp_path: Path) -> None:
+    client, *_ = _client(tmp_path)
+
+    response = client.post(
+        "/tools/salesforce/read",
+        json={"object_name": "Opportunity", "record_id": "006abc"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["record_id"] == "006abc"
+
+
+def test_salesforce_unconfigured_returns_503(tmp_path: Path) -> None:
+    client, *_ = _client(tmp_path, with_salesforce=False)
+
+    response = client.post("/tools/salesforce/query", json={"soql": "SELECT Id FROM Opportunity"})
+
+    assert response.status_code == 503
+
+
+def test_salesforce_create_gated(tmp_path: Path) -> None:
+    client, store, _, _, _, salesforce_client = _client(tmp_path)
+
+    propose = client.post(
+        "/tools/salesforce/create",
+        json={"process_id": "order-8", "object_name": "Lead", "fields": {"LastName": "Doe", "Company": "Acme"}},
+    )
+    assert propose.status_code == 200
+    assert propose.json()["pending_action"]["tool"] == "salesforce"
+    assert salesforce_client.created == []
+
+    decide = client.post("/tools/actions/order-8/decision", json={"approved": True})
+    assert decide.status_code == 200
+    assert decide.json()["final_result"]["executed"] is True
+    assert len(salesforce_client.created) == 1
+
+
+def test_salesforce_update_gated(tmp_path: Path) -> None:
+    client, store, _, _, _, salesforce_client = _client(tmp_path)
+
+    propose = client.post(
+        "/tools/salesforce/update",
+        json={
+            "process_id": "order-9",
+            "object_name": "Opportunity",
+            "record_id": "006abc",
+            "fields": {"StageName": "Closed Won"},
+        },
+    )
+    assert propose.status_code == 200
+    assert salesforce_client.updated == []
+
+    decide = client.post("/tools/actions/order-9/decision", json={"approved": False})
+    assert decide.status_code == 200
+    assert decide.json()["final_result"] == {"executed": False, "reason": "rejected"}
+    assert salesforce_client.updated == []

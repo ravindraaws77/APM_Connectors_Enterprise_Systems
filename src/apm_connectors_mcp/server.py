@@ -14,8 +14,9 @@ running elsewhere:
     pip install -e ".[mcp]"
     APM_CONNECTORS_BASE_URL=http://127.0.0.1:8000 apm-connectors-mcp
 
-Every write tool (gmail_send, calendar_create_event, excel_write)
-mirrors the REST API exactly: it does not execute anything -- it
+Every write tool (gmail_send, calendar_create_event, excel_write,
+salesforce_create, salesforce_update) mirrors the REST API exactly: it
+does not execute anything -- it
 returns a paused action_id, and the agent must call
 decide_action(action_id, approved=True) to actually run it. That gate
 is enforced server-side in the /tools/* API regardless of what this
@@ -187,6 +188,57 @@ def build_server(client: ConnectorClient, name: str = "apm-connectors") -> MCPSe
         return await _call(
             "/tools/excel/write",
             {"sheet_name": sheet_name, "address": address, "values": values, "process_id": process_id},
+        )
+
+    # -- Salesforce ---------------------------------------------------------
+
+    @mcp.tool()
+    async def salesforce_query(soql: str, process_id: str | None = None) -> list[dict]:
+        """Run a read-only Salesforce SOQL query, e.g. "SELECT Id, Name,
+        StageName FROM Opportunity WHERE StageName = 'Negotiation' LIMIT
+        20". Cap result size with SOQL's own LIMIT clause. Read-only:
+        executes immediately, no approval needed.
+        """
+        return await _call("/tools/salesforce/query", {"soql": soql, "process_id": process_id})
+
+    @mcp.tool()
+    async def salesforce_read(object_name: str, record_id: str, process_id: str | None = None) -> dict[str, Any]:
+        """Read one Salesforce record by its object type (e.g.
+        "Opportunity", "Contact", "Lead") and id (from salesforce_query's
+        results). Read-only: executes immediately.
+        """
+        return await _call(
+            "/tools/salesforce/read", {"object_name": object_name, "record_id": record_id, "process_id": process_id}
+        )
+
+    @mcp.tool()
+    async def salesforce_create(
+        object_name: str, fields: dict[str, Any], process_id: str | None = None
+    ) -> dict[str, Any]:
+        """Propose creating a new Salesforce record, e.g.
+        object_name="Lead", fields={"LastName": "Doe", "Company": "Acme"}.
+        This does NOT create anything -- it pauses for human approval and
+        returns action_id in the response. Call decide_action with that
+        action_id and approved=true to actually create it, or
+        approved=false to discard it.
+        """
+        return await _call(
+            "/tools/salesforce/create", {"object_name": object_name, "fields": fields, "process_id": process_id}
+        )
+
+    @mcp.tool()
+    async def salesforce_update(
+        object_name: str, record_id: str, fields: dict[str, Any], process_id: str | None = None
+    ) -> dict[str, Any]:
+        """Propose updating an existing Salesforce record's fields, e.g.
+        object_name="Opportunity", record_id="006...",
+        fields={"StageName": "Closed Won"}. This does NOT update anything
+        -- it pauses for approval and returns action_id; call
+        decide_action to resolve it.
+        """
+        return await _call(
+            "/tools/salesforce/update",
+            {"object_name": object_name, "record_id": record_id, "fields": fields, "process_id": process_id},
         )
 
     # -- Shared decision route for every write above -------------------------
