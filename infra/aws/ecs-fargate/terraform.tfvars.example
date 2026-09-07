@@ -6,6 +6,7 @@ app_name   = "apm-connectors"
 
 # google_client_id        = ""
 # google_client_secret    = ""
+# google_token_json       = ""  # paste .google_token.json's full contents (see docs/deployment.md)
 # ms_graph_client_id      = ""
 # ms_graph_client_secret  = ""
 # ms_graph_tenant_id      = ""
