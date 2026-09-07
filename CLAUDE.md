@@ -51,5 +51,5 @@ src/apm_connectors/
 tests/               unit tests, runnable without live credentials
 tests/integration/   full-stack tests against a real running server, also no live credentials
 scripts/         manual smoke-test scripts for real credentials
-infra/aws/       Terraform to deploy the API to AWS App Runner
+infra/aws/       Terraform to deploy the API to AWS ECS on Fargate
 ```
