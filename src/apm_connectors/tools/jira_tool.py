@@ -61,7 +61,11 @@ class JiraTool(BaseTool):
 
     def health_check(self) -> bool:
         try:
-            self._client.search_issues("order by created DESC", 1)
+            # Jira Cloud's search endpoint rejects an "unbounded" JQL query
+            # (no restriction clause at all, even with just an ORDER BY) --
+            # "assignee = currentUser()" is a restriction every account can
+            # run with zero setup, valid whether or not it matches anything.
+            self._client.search_issues("assignee = currentUser()", 1)
             return True
         except Exception:
             return False
@@ -157,7 +161,14 @@ class JiraRestClient:
 
     Uses /rest/api/3/search/jql (POST) rather than the older
     /rest/api/3/search (GET) for search_issues -- Atlassian deprecated
-    the GET endpoint in favor of this one for Jira Cloud.
+    the GET endpoint in favor of this one for Jira Cloud. Two live-
+    verified quirks of that newer endpoint, both handled here: (1) it
+    rejects an "unbounded" JQL query with no restriction clause at all
+    (JiraTool.health_check works around this by querying `assignee =
+    currentUser()` rather than a bare ORDER BY); (2) unlike a plain GET
+    /issue/{key}, it returns bare {"id": ...} entries with no "key" or
+    "fields" unless a "fields" param is passed explicitly (search_issues
+    always passes ["*all"] to match get_issue's default).
     """
 
     def __init__(self, base_url: str, email: str, api_token: str) -> None:
@@ -175,7 +186,11 @@ class JiraRestClient:
             f"{self._base}/search/jql",
             auth=self._auth,
             headers=self._headers(),
-            json={"jql": jql, "maxResults": max_results},
+            # "fields": ["*all"] matches get_issue's default (a plain GET
+            # /issue/{key} returns every field) -- without it, /search/jql
+            # returns bare {"id": ...} entries with no "key" or "fields"
+            # at all, unlike the old, now-deprecated /search endpoint.
+            json={"jql": jql, "maxResults": max_results, "fields": ["*all"]},
             timeout=30,
         )
         response.raise_for_status()
