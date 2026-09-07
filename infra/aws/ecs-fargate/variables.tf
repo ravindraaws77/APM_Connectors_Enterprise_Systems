@@ -91,3 +91,28 @@ variable "apm_excel_drive_file_id" {
   type        = string
   default     = ""
 }
+
+variable "salesforce_client_id" {
+  description = "Salesforce Connected App consumer key, for the OAuth 2.0 Client Credentials Flow."
+  type        = string
+  default     = ""
+}
+
+variable "salesforce_client_secret" {
+  description = "Salesforce Connected App consumer secret. Stored as an SSM SecureString, never a plain env var."
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
+variable "salesforce_domain" {
+  description = "Salesforce org domain (e.g. \"my-org-dev-ed.develop.my.salesforce.com\"), used to build the OAuth token URL and API base."
+  type        = string
+  default     = ""
+}
+
+variable "salesforce_api_version" {
+  description = "Salesforce REST API version to call, e.g. \"v60.0\". Leave empty to use the connector's default (salesforce_tool.DEFAULT_API_VERSION)."
+  type        = string
+  default     = ""
+}

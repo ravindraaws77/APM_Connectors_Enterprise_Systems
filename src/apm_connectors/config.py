@@ -48,6 +48,9 @@ class Settings:
     salesforce_client_secret: str | None = None
     salesforce_domain: str | None = None
     salesforce_api_version: str | None = None
+    jira_base_url: str | None = None
+    jira_email: str | None = None
+    jira_api_token: str | None = None
 
 
 def load_settings() -> Settings:
@@ -65,4 +68,7 @@ def load_settings() -> Settings:
         salesforce_client_secret=os.environ.get("SALESFORCE_CLIENT_SECRET"),
         salesforce_domain=os.environ.get("SALESFORCE_DOMAIN"),
         salesforce_api_version=os.environ.get("SALESFORCE_API_VERSION"),
+        jira_base_url=os.environ.get("JIRA_BASE_URL"),
+        jira_email=os.environ.get("JIRA_EMAIL"),
+        jira_api_token=os.environ.get("JIRA_API_TOKEN"),
     )

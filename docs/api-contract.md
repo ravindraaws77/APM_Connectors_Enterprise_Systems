@@ -115,6 +115,24 @@ Salesforce's `nextRecordsUrl` pagination beyond the first page.
 `SALESFORCE_CLIENT_SECRET`/`SALESFORCE_DOMAIN` — see
 `docs/capability-map.md`; if unset, every Salesforce route 503s.
 
+## Jira
+
+| Route | Kind | Request body | Returns |
+|---|---|---|---|
+| `POST /tools/jira/search` | read | `{process_id?, jql, max_results?}` | `[{issue_key, issue_type, fields: {...}}, ...]` |
+| `POST /tools/jira/read` | read | `{process_id?, issue_key}` | `{issue_key, issue_type, fields: {...}}` |
+| `POST /tools/jira/create` | **write** | `{process_id?, fields: {...}}` | `RunOutcomeResponse` |
+| `POST /tools/jira/update` | **write** | `{process_id?, issue_key, fields: {...}}` | `RunOutcomeResponse` |
+
+`jql` is a full JQL query string (e.g. `"project = OPS AND status =
+'In Progress' ORDER BY updated DESC"`) — cap result size with
+`max_results` (default 50); this connector doesn't follow Jira's
+pagination beyond the first page. `fields` on `create`/`update` is the
+Jira `fields` payload as-is, e.g. `{"project": {"key": "OPS"},
+"summary": "Fix the thing", "issuetype": {"name": "Bug"}}`. Requires
+`JIRA_BASE_URL`/`JIRA_EMAIL`/`JIRA_API_TOKEN` — see
+`docs/capability-map.md`; if unset, every Jira route 503s.
+
 ## Approving or rejecting a write
 
 Every write route above returns a paused `RunOutcomeResponse`. Its

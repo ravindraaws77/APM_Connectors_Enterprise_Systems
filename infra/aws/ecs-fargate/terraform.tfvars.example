@@ -11,3 +11,7 @@ app_name   = "apm-connectors"
 # ms_graph_client_secret  = ""
 # ms_graph_tenant_id      = ""
 # apm_excel_drive_file_id = ""
+# salesforce_client_id     = ""
+# salesforce_client_secret = ""
+# salesforce_domain        = ""  # e.g. "my-org-dev-ed.develop.my.salesforce.com"
+# salesforce_api_version   = ""  # e.g. "v60.0" -- leave unset to use the connector's default
