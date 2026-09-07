@@ -47,6 +47,9 @@ See `docs/running-locally.md` for the full walkthrough.
 - `docs/team-quickstart.md` — for anyone consuming a running instance
   of this API: another APM layer, a script, or Claude via
   `apm_connectors_mcp`.
+- `docs/google-account-setup.md` — pointing the Gmail/Calendar
+  connectors at a different Google account, locally or on the AWS
+  deployment.
 
 ## Layout
 
