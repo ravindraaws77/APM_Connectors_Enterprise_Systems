@@ -111,6 +111,32 @@ since the task definition itself changed). Secrets go into SSM as
 non-secret values (client IDs, tenant id, workbook path/Drive file id)
 are set directly as plain environment variables in the task definition.
 
+## Enabling real Gmail/Calendar on this deployment
+
+The Gmail/Calendar connectors' default OAuth flow
+(`src/apm_connectors/tools/google_auth.py`) opens a browser and catches
+the redirect on `localhost` — that can't run inside this headless
+container. Instead:
+
+1. Run the local interactive consent flow once, following
+   `docs/running-locally.md` (set `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET`
+   in a local `.env`, start the server locally, and make one `/tools/gmail/*`
+   or `/tools/calendar/*` call — a browser opens for you to sign in).
+   This produces a `.google_token.json` file in your working directory.
+2. Copy that file's full contents into `terraform.tfvars`:
+   ```
+   google_token_json = "{\"token\": \"...\", \"refresh_token\": \"...\", ...}"
+   ```
+   (a single-line JSON string, escaped as a Terraform string literal)
+3. `terraform apply` — this creates a `GOOGLE_TOKEN_JSON` SSM
+   `SecureString` and wires it into the task definition, taking
+   precedence over `google_client_id`/`google_client_secret` in the
+   deployed app.
+
+The token's `refresh_token` keeps working indefinitely (Google doesn't
+rotate it on use), so this is a one-time setup, not something to repeat
+per deploy — unless the consent is revoked from the Google account side.
+
 ## Known limitations (MVP tradeoff, same as running locally)
 
 - **State is ephemeral.** `src/apm_connectors/state/store.py` is a

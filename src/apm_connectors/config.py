@@ -40,12 +40,17 @@ class Settings:
     excel_workbook_path: str | None
     excel_drive_file_id: str | None
     state_dir: Path
+    # Default None so existing code that constructs Settings(...) directly
+    # (e.g. test fixtures predating this field) doesn't break -- a dataclass
+    # field with a default must come after every field without one.
+    google_token_json: str | None = None
 
 
 def load_settings() -> Settings:
     return Settings(
         google_client_id=os.environ.get("GOOGLE_CLIENT_ID"),
         google_client_secret=os.environ.get("GOOGLE_CLIENT_SECRET"),
+        google_token_json=os.environ.get("GOOGLE_TOKEN_JSON"),
         ms_graph_client_id=os.environ.get("MS_GRAPH_CLIENT_ID"),
         ms_graph_client_secret=os.environ.get("MS_GRAPH_CLIENT_SECRET"),
         ms_graph_tenant_id=os.environ.get("MS_GRAPH_TENANT_ID"),

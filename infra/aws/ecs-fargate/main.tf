@@ -231,11 +231,8 @@ resource "aws_iam_role_policy_attachment" "execution_managed" {
 
 data "aws_iam_policy_document" "execution_ssm_read" {
   statement {
-    actions = ["ssm:GetParameters"]
-    resources = [
-      aws_ssm_parameter.google_client_secret.arn,
-      aws_ssm_parameter.ms_graph_client_secret.arn,
-    ]
+    actions   = ["ssm:GetParameters"]
+    resources = local.ssm_secret_arns
   }
 }
 
@@ -257,6 +254,33 @@ resource "aws_ssm_parameter" "ms_graph_client_secret" {
   name  = "/${var.app_name}/MS_GRAPH_CLIENT_SECRET"
   type  = "SecureString"
   value = var.ms_graph_client_secret != "" ? var.ms_graph_client_secret : "unset"
+}
+
+# Only created when set -- unlike the two secrets above, this one has no
+# "unset" placeholder: an unconfigured GOOGLE_TOKEN_JSON should mean the
+# app falls back to the interactive/local-file flow (src/apm_connectors/
+# tools/google_auth.py), the same as an unfilled local .env, not receive
+# a literal "unset" string as a token.
+resource "aws_ssm_parameter" "google_token_json" {
+  count = var.google_token_json != "" ? 1 : 0
+  name  = "/${var.app_name}/GOOGLE_TOKEN_JSON"
+  type  = "SecureString"
+  value = var.google_token_json
+}
+
+locals {
+  ssm_secret_arns = concat(
+    [aws_ssm_parameter.google_client_secret.arn, aws_ssm_parameter.ms_graph_client_secret.arn],
+    var.google_token_json != "" ? [aws_ssm_parameter.google_token_json[0].arn] : []
+  )
+
+  container_secrets = concat(
+    [
+      { name = "GOOGLE_CLIENT_SECRET", valueFrom = aws_ssm_parameter.google_client_secret.arn },
+      { name = "MS_GRAPH_CLIENT_SECRET", valueFrom = aws_ssm_parameter.ms_graph_client_secret.arn },
+    ],
+    var.google_token_json != "" ? [{ name = "GOOGLE_TOKEN_JSON", valueFrom = aws_ssm_parameter.google_token_json[0].arn }] : []
+  )
 }
 
 # -- ECS --------------------------------------------------------------------
@@ -287,10 +311,7 @@ resource "aws_ecs_task_definition" "this" {
         { name = "APM_EXCEL_WORKBOOK_PATH", value = var.apm_excel_workbook_path },
         { name = "APM_EXCEL_DRIVE_FILE_ID", value = var.apm_excel_drive_file_id },
       ]
-      secrets = [
-        { name = "GOOGLE_CLIENT_SECRET", valueFrom = aws_ssm_parameter.google_client_secret.arn },
-        { name = "MS_GRAPH_CLIENT_SECRET", valueFrom = aws_ssm_parameter.ms_graph_client_secret.arn },
-      ]
+      secrets = local.container_secrets
       logConfiguration = {
         logDriver = "awslogs"
         options = {
