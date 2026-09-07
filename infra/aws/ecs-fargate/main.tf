@@ -150,7 +150,7 @@ resource "aws_security_group" "service" {
   egress {
     # Outbound needed for: pulling the image from ECR, pushing logs to
     # CloudWatch, reading secrets from SSM, and the app itself calling
-    # Gmail/Calendar/Graph APIs.
+    # Gmail/Calendar/Graph/Salesforce APIs.
     from_port   = 0
     to_port     = 0
     protocol    = "-1"
@@ -256,6 +256,12 @@ resource "aws_ssm_parameter" "ms_graph_client_secret" {
   value = var.ms_graph_client_secret != "" ? var.ms_graph_client_secret : "unset"
 }
 
+resource "aws_ssm_parameter" "salesforce_client_secret" {
+  name  = "/${var.app_name}/SALESFORCE_CLIENT_SECRET"
+  type  = "SecureString"
+  value = var.salesforce_client_secret != "" ? var.salesforce_client_secret : "unset"
+}
+
 # Only created when set -- unlike the two secrets above, this one has no
 # "unset" placeholder: an unconfigured GOOGLE_TOKEN_JSON should mean the
 # app falls back to the interactive/local-file flow (src/apm_connectors/
@@ -270,7 +276,11 @@ resource "aws_ssm_parameter" "google_token_json" {
 
 locals {
   ssm_secret_arns = concat(
-    [aws_ssm_parameter.google_client_secret.arn, aws_ssm_parameter.ms_graph_client_secret.arn],
+    [
+      aws_ssm_parameter.google_client_secret.arn,
+      aws_ssm_parameter.ms_graph_client_secret.arn,
+      aws_ssm_parameter.salesforce_client_secret.arn,
+    ],
     var.google_token_json != "" ? [aws_ssm_parameter.google_token_json[0].arn] : []
   )
 
@@ -278,6 +288,7 @@ locals {
     [
       { name = "GOOGLE_CLIENT_SECRET", valueFrom = aws_ssm_parameter.google_client_secret.arn },
       { name = "MS_GRAPH_CLIENT_SECRET", valueFrom = aws_ssm_parameter.ms_graph_client_secret.arn },
+      { name = "SALESFORCE_CLIENT_SECRET", valueFrom = aws_ssm_parameter.salesforce_client_secret.arn },
     ],
     var.google_token_json != "" ? [{ name = "GOOGLE_TOKEN_JSON", valueFrom = aws_ssm_parameter.google_token_json[0].arn }] : []
   )
@@ -310,6 +321,9 @@ resource "aws_ecs_task_definition" "this" {
         { name = "MS_GRAPH_TENANT_ID", value = var.ms_graph_tenant_id },
         { name = "APM_EXCEL_WORKBOOK_PATH", value = var.apm_excel_workbook_path },
         { name = "APM_EXCEL_DRIVE_FILE_ID", value = var.apm_excel_drive_file_id },
+        { name = "SALESFORCE_CLIENT_ID", value = var.salesforce_client_id },
+        { name = "SALESFORCE_DOMAIN", value = var.salesforce_domain },
+        { name = "SALESFORCE_API_VERSION", value = var.salesforce_api_version },
       ]
       secrets = local.container_secrets
       logConfiguration = {
@@ -370,6 +384,7 @@ resource "null_resource" "force_new_deployment" {
       var.google_client_secret,
       var.ms_graph_client_secret,
       var.google_token_json,
+      var.salesforce_client_secret,
     ]))
   }
 
