@@ -12,7 +12,12 @@ pytest -q
 ```
 
 No credentials are needed to run the test suite — every connector is
-tested against an in-memory fake client (see `tests/`).
+tested against an in-memory fake client (see `tests/`). `pytest -q`
+above also runs `tests/integration/`: the same fake-client coverage,
+but driven over real HTTP against a real running server process
+(`uvicorn`/`socket`, no live credentials) rather than FastAPI's
+in-process `TestClient` — run just that suite with
+`pytest tests/integration -q`.
 
 ## Run the API
 
@@ -68,3 +73,6 @@ this API directly, or through `apm_connectors_mcp` if it's an
 LLM-based agent. See `docs/security-guardrails.md` for the one rule
 that never bends regardless of who's calling: every write pauses for
 human approval before anything executes.
+
+See `docs/deployment.md` to run this same API as a container, either
+locally with Docker or deployed to AWS App Runner.

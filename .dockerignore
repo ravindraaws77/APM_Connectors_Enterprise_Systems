@@ -1,0 +1,13 @@
+.venv
+__pycache__
+*.pyc
+.git
+.gitignore
+.env
+state/
+*.egg-info
+tests/
+scripts/
+docs/
+.claude/
+infra/

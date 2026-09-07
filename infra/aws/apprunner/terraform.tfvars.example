@@ -1,0 +1,12 @@
+# Copy to terraform.tfvars and fill in whichever connectors you want
+# live. terraform.tfvars is gitignored -- never commit real values.
+
+aws_region = "us-east-1"
+app_name   = "apm-connectors"
+
+# google_client_id        = ""
+# google_client_secret    = ""
+# ms_graph_client_id      = ""
+# ms_graph_client_secret  = ""
+# ms_graph_tenant_id      = ""
+# apm_excel_drive_file_id = ""

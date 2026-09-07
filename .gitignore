@@ -24,3 +24,13 @@ state/*.json
 .DS_Store
 .vscode/
 .idea/
+
+# Terraform (infra/aws)
+**/.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+**/terraform.tfvars
+!**/terraform.tfvars.example
+crash.log
+crash.*.log
