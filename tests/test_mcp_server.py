@@ -21,14 +21,18 @@ from apm_connectors.state.store import StateStore
 from apm_connectors.tools.calendar_tool import CalendarTool
 from apm_connectors.tools.excel_file_tool import ExcelFileTool
 from apm_connectors.tools.gmail_tool import GmailTool
+from apm_connectors.tools.salesforce_tool import SalesforceTool
 from apm_connectors_mcp.client import ConnectorClient
 from apm_connectors_mcp.server import build_server
 from tests.test_calendar_tool import FakeCalendarClient
 from tests.test_excel_file_tool import FakeWorkbookSource, _sample_workbook_bytes
 from tests.test_gmail_tool import FakeGmailClient, _raw_message
+from tests.test_salesforce_tool import FakeSalesforceClient, _raw_record
 
 
-def _mcp(tmp_path: Path, with_excel: bool = True, gmail_messages: list | None = None):
+def _mcp(
+    tmp_path: Path, with_excel: bool = True, with_salesforce: bool = True, gmail_messages: list | None = None
+):
     """Same fake-tool wiring as tests/test_tools_api.py's _client, but
     reachable through the MCP server instead of a plain TestClient.
     """
@@ -43,6 +47,12 @@ def _mcp(tmp_path: Path, with_excel: bool = True, gmail_messages: list | None = 
     if with_excel:
         excel_source = FakeWorkbookSource(_sample_workbook_bytes())
         tools["excel_file"] = ExcelFileTool(store, excel_source)
+    salesforce_client = None
+    if with_salesforce:
+        salesforce_client = FakeSalesforceClient(
+            [_raw_record("006abc", "Opportunity", Name="Acme Renewal", StageName="Negotiation")]
+        )
+        tools["salesforce"] = SalesforceTool(store, salesforce_client)
     action_graph = build_action_graph(tools, store, checkpointer=MemorySaver())
 
     app = create_app()
@@ -51,7 +61,7 @@ def _mcp(tmp_path: Path, with_excel: bool = True, gmail_messages: list | None = 
 
     client = ConnectorClient(base_url="http://testserver", transport=httpx.ASGITransport(app=app))
     mcp = build_server(client)
-    return mcp, store, gmail_client, calendar_client, excel_source
+    return mcp, store, gmail_client, calendar_client, excel_source, salesforce_client
 
 
 @pytest.mark.anyio
@@ -71,6 +81,10 @@ async def test_lists_one_tool_per_tools_route(tmp_path: Path) -> None:
         "excel_worksheets",
         "excel_read",
         "excel_write",
+        "salesforce_query",
+        "salesforce_read",
+        "salesforce_create",
+        "salesforce_update",
         "decide_action",
     }
 
@@ -145,6 +159,60 @@ async def test_gmail_send_rejected_does_not_execute(tmp_path: Path) -> None:
 
     assert decide.structured_content["final_result"] == {"executed": False, "reason": "rejected"}
     assert gmail_client.sent == []
+
+
+@pytest.mark.anyio
+async def test_salesforce_query_returns_data_immediately(tmp_path: Path) -> None:
+    mcp, *_ = _mcp(tmp_path)
+
+    result = await mcp.call_tool("salesforce_query", {"soql": "SELECT Id, Name FROM Opportunity"})
+
+    assert result.is_error is False
+    assert len(result.structured_content["result"]) == 1
+    assert result.structured_content["result"][0]["record_id"] == "006abc"
+
+
+@pytest.mark.anyio
+async def test_salesforce_unconfigured_raises_tool_error(tmp_path: Path) -> None:
+    mcp, *_ = _mcp(tmp_path, with_salesforce=False)
+
+    with pytest.raises(ToolError, match="tool not configured"):
+        await mcp.call_tool("salesforce_query", {"soql": "SELECT Id FROM Opportunity"})
+
+
+@pytest.mark.anyio
+async def test_salesforce_create_pauses_then_decide_action_executes(tmp_path: Path) -> None:
+    mcp, store, _, _, _, salesforce_client = _mcp(tmp_path)
+
+    propose = await mcp.call_tool(
+        "salesforce_create", {"object_name": "Lead", "fields": {"LastName": "Doe", "Company": "Acme"}}
+    )
+    assert propose.is_error is False
+    action_id = propose.structured_content["action_id"]
+    assert propose.structured_content["pending_action"] is not None
+    assert salesforce_client.created == []
+
+    decide = await mcp.call_tool("decide_action", {"action_id": action_id, "approved": True})
+
+    assert decide.is_error is False
+    assert decide.structured_content["final_result"]["executed"] is True
+    assert len(salesforce_client.created) == 1
+
+
+@pytest.mark.anyio
+async def test_salesforce_update_rejected_does_not_execute(tmp_path: Path) -> None:
+    mcp, store, _, _, _, salesforce_client = _mcp(tmp_path)
+
+    propose = await mcp.call_tool(
+        "salesforce_update",
+        {"object_name": "Opportunity", "record_id": "006abc", "fields": {"StageName": "Closed Won"}},
+    )
+    action_id = propose.structured_content["action_id"]
+
+    decide = await mcp.call_tool("decide_action", {"action_id": action_id, "approved": False})
+
+    assert decide.structured_content["final_result"] == {"executed": False, "reason": "rejected"}
+    assert salesforce_client.updated == []
 
 
 @pytest.fixture

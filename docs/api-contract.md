@@ -97,6 +97,24 @@ is set, every Excel route 503s. `read`'s `sheet_name`/`address` default
 to the workbook's first worksheet and its whole used range when
 omitted — pass them explicitly for anything more specific.
 
+## Salesforce
+
+| Route | Kind | Request body | Returns |
+|---|---|---|---|
+| `POST /tools/salesforce/query` | read | `{process_id?, soql}` | `[{record_id, object_type, fields: {...}}, ...]` |
+| `POST /tools/salesforce/read` | read | `{process_id?, object_name, record_id}` | `{record_id, object_type, fields: {...}}` |
+| `POST /tools/salesforce/create` | **write** | `{process_id?, object_name, fields: {...}}` | `RunOutcomeResponse` |
+| `POST /tools/salesforce/update` | **write** | `{process_id?, object_name, record_id, fields: {...}}` | `RunOutcomeResponse` |
+
+`soql` is a full SOQL query string (e.g. `"SELECT Id, Name, StageName
+FROM Opportunity WHERE StageName = 'Negotiation' LIMIT 20"`) — cap result
+size with SOQL's own `LIMIT` clause; this connector doesn't follow
+Salesforce's `nextRecordsUrl` pagination beyond the first page.
+`object_name` is a Salesforce object API name (e.g. `"Lead"`,
+`"Opportunity"`, `"Contact"`). Requires `SALESFORCE_CLIENT_ID`/
+`SALESFORCE_CLIENT_SECRET`/`SALESFORCE_DOMAIN` — see
+`docs/capability-map.md`; if unset, every Salesforce route 503s.
+
 ## Approving or rejecting a write
 
 Every write route above returns a paused `RunOutcomeResponse`. Its

@@ -23,6 +23,7 @@ from apm_connectors.state.store import StateStore
 from apm_connectors.tools.base import BaseTool
 from apm_connectors.tools.excel_file_tool import build_configured_excel_tool
 from apm_connectors.tools.google_auth import build_gmail_and_calendar_tools
+from apm_connectors.tools.salesforce_tool import build_configured_salesforce_tool
 
 
 @lru_cache
@@ -59,6 +60,10 @@ def get_tools() -> dict[str, BaseTool]:
     excel_tool = build_configured_excel_tool(state, settings)
     if excel_tool is not None:
         tools["excel_file"] = excel_tool
+
+    salesforce_tool = build_configured_salesforce_tool(state, settings)
+    if salesforce_tool is not None:
+        tools["salesforce"] = salesforce_tool
 
     return tools
 
