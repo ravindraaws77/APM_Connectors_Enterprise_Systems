@@ -64,7 +64,12 @@ resource "null_resource" "docker_build_push" {
     # script. See docs/deployment.md.
     interpreter = ["bash", "-c"]
     working_dir = local.repo_root
-    command     = <<-EOT
+    # replace(...,"\r\n","\n"): on Windows, a checkout with the default
+    # core.autocrlf=true rewrites this heredoc's line endings to CRLF,
+    # which corrupts the script when bash runs it (e.g. `set -o
+    # pipefail` fails because the word is actually "pipefail\r"). Force
+    # LF regardless of how the file was checked out. See .gitattributes.
+    command = replace(<<-EOT
       set -euo pipefail
       aws ecr get-login-password --region ${var.aws_region} \
         | docker login --username AWS --password-stdin ${aws_ecr_repository.this.repository_url}
@@ -76,6 +81,7 @@ resource "null_resource" "docker_build_push" {
         -t ${aws_ecr_repository.this.repository_url}:${var.image_tag} \
         --push .
     EOT
+    , "\r\n", "\n")
   }
 }
 
