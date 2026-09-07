@@ -12,7 +12,10 @@ Setup (one-time):
   4. pip install -e ".[connectors]"
 
 Usage:
-  # Health check + a default JQL search (your 5 most recently created issues):
+  # Health check + a default JQL search (your 5 most recently created
+  # issues assigned to you -- Jira Cloud's search endpoint rejects an
+  # unbounded query with no restriction clause, so this can't just be
+  # "every issue"; pass --search for anything more specific):
   python scripts/jira_demo.py
 
   # A JQL search of your choice:
@@ -49,7 +52,7 @@ from apm_connectors.config import load_settings
 from apm_connectors.state.store import StateStore
 from apm_connectors.tools.jira_tool import build_configured_jira_tool
 
-DEFAULT_JQL = "ORDER BY created DESC"
+DEFAULT_JQL = "assignee = currentUser() ORDER BY created DESC"
 DEFAULT_MAX_RESULTS = 5
 
 
