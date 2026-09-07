@@ -40,7 +40,7 @@ reasoning/orchestration layer calling this API, not in this repo.
 ## Layout
 
 ```
-docs/            api contract, capability map, security guardrails, running locally
+docs/            api contract, capability map, security guardrails, running locally, deployment
 .claude/skills/  tool-integration: checklist for adding a connector
 src/apm_connectors/
   config.py      env/config loading
@@ -48,6 +48,8 @@ src/apm_connectors/
   tools/         one module per external tool, common interface in base.py
   graph.py       small propose -> approval -> execute LangGraph layer
   api/           FastAPI app + /tools/* routes
-tests/           unit tests, runnable without live credentials
+tests/               unit tests, runnable without live credentials
+tests/integration/   full-stack tests against a real running server, also no live credentials
 scripts/         manual smoke-test scripts for real credentials
+infra/aws/       Terraform to deploy the API to AWS App Runner
 ```
