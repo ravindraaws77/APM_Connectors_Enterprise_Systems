@@ -30,6 +30,16 @@ Usage:
   python scripts/salesforce_demo.py --create Lead LastName=Doe Company=Acme
   python scripts/salesforce_demo.py --update Lead 00QXXXXXXXXXXXXXXX Company=Acme2
 
+To exercise a *real* write (dry_run=False), go through the approval-gated
+API instead of this script -- start the server
+(`uvicorn apm_connectors.api.app:app --port 8000`), POST the write to
+`/tools/salesforce/create` or `/tools/salesforce/update`, then POST
+`{"approved": true}` to `/tools/actions/{action_id}/decision` (use the
+top-level `action_id` from the propose response, not the one nested
+inside `pending_action`) -- see docs/api-contract.md. Live-verified this
+way against a real Developer Edition org on 2026-09-07 (see
+docs/capability-map.md's Salesforce row).
+
 This only ever performs read calls against the org, plus dry-run (no-op)
 create/update calls -- nothing is written to Salesforce.
 """
