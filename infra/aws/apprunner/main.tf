@@ -59,13 +59,22 @@ resource "null_resource" "docker_build_push" {
   }
 
   provisioner "local-exec" {
+    # Requires bash (Git Bash / WSL on Windows, native on macOS/Linux) --
+    # local-exec defaults to cmd.exe on Windows, which can't run this
+    # script. See docs/deployment.md.
+    interpreter = ["bash", "-c"]
     working_dir = local.repo_root
     command     = <<-EOT
       set -euo pipefail
       aws ecr get-login-password --region ${var.aws_region} \
         | docker login --username AWS --password-stdin ${aws_ecr_repository.this.repository_url}
-      docker build -t ${aws_ecr_repository.this.repository_url}:${var.image_tag} .
-      docker push ${aws_ecr_repository.this.repository_url}:${var.image_tag}
+      # --platform linux/amd64: App Runner only runs x86_64, so this
+      # cross-compiles even when `terraform apply` runs on an ARM
+      # machine (Apple Silicon, Windows-on-ARM) where a plain
+      # `docker build` would otherwise produce an arm64 image.
+      docker buildx build --platform linux/amd64 \
+        -t ${aws_ecr_repository.this.repository_url}:${var.image_tag} \
+        --push .
     EOT
   }
 }
