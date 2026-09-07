@@ -31,10 +31,18 @@ still deploys and passes its health check with zero connectors wired up.
 - An AWS account with permissions to create ECR repos, IAM roles, SSM
   parameters, and App Runner services.
 - [Terraform](https://developer.hashicorp.com/terraform/install) >= 1.5
-- Docker, running locally (the build/push step shells out to it)
+- Docker Desktop (or another `buildx`-capable Docker), running locally
+  — the build/push step shells out to `docker buildx build --platform
+  linux/amd64`, which cross-compiles for App Runner's required x86_64
+  even if `terraform apply` itself runs on an ARM machine (Apple
+  Silicon, Windows-on-ARM). Docker Desktop supports this out of the
+  box, no extra setup.
 - AWS CLI v2, configured with credentials for that account
   (`aws configure`, or an SSO/profile setup — `terraform apply` and the
   `aws ecr` login it runs both use your default credential chain)
+- **On Windows**: run `terraform apply` from a bash-capable shell (Git
+  Bash or WSL), not plain Command Prompt/PowerShell — the build/push
+  step's script uses bash syntax that `cmd.exe` can't run.
 
 ## Deploy
 
