@@ -5,7 +5,7 @@ variable "aws_region" {
 }
 
 variable "app_name" {
-  description = "Name used for the ECR repository, App Runner service, and IAM roles."
+  description = "Name used for the ECR repository, ALB, ECS cluster/service, and IAM roles."
   type        = string
   default     = "apm-connectors"
 }
@@ -17,15 +17,21 @@ variable "image_tag" {
 }
 
 variable "cpu" {
-  description = "App Runner instance vCPU, e.g. \"0.25 vCPU\", \"1 vCPU\"."
+  description = "Fargate task vCPU units, e.g. \"256\" = 0.25 vCPU. Must be a valid Fargate cpu/memory pair -- see AWS docs."
   type        = string
-  default     = "0.25 vCPU"
+  default     = "256"
 }
 
 variable "memory" {
-  description = "App Runner instance memory, e.g. \"0.5 GB\", \"2 GB\"."
+  description = "Fargate task memory in MB, e.g. \"512\". Must be a valid Fargate cpu/memory pair -- see AWS docs."
   type        = string
-  default     = "0.5 GB"
+  default     = "512"
+}
+
+variable "desired_count" {
+  description = "Number of running tasks."
+  type        = number
+  default     = 1
 }
 
 # -- Optional connector configuration -------------------------------------

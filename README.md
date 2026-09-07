@@ -41,9 +41,9 @@ See `docs/running-locally.md` for the full walkthrough.
   executes without an explicit human approval step.
 - `docs/running-locally.md` — setup and how to run it, including the
   MCP server.
-- `docs/deployment.md` — deploying the API to AWS App Runner via
-  Terraform (`infra/aws/apprunner/`), and running the integration test
-  suite against a real running server.
+- `docs/deployment.md` — deploying the API to AWS ECS on Fargate via
+  Terraform (`infra/aws/ecs-fargate/`), and running the integration
+  test suite against a real running server.
 
 ## Layout
 
@@ -60,6 +60,6 @@ src/apm_connectors_mcp/
 tests/               unit tests, runnable without live credentials
 tests/integration/   full-stack tests against a real running server, also no live credentials
 scripts/         manual smoke-test scripts for real credentials
-infra/aws/       Terraform to deploy the API to AWS App Runner
+infra/aws/       Terraform to deploy the API to AWS ECS on Fargate
 .claude/skills/  tool-integration: the checklist for adding a connector
 ```
