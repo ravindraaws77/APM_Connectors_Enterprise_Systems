@@ -44,6 +44,9 @@ See `docs/running-locally.md` for the full walkthrough.
 - `docs/deployment.md` — deploying the API to AWS ECS on Fargate via
   Terraform (`infra/aws/ecs-fargate/`), and running the integration
   test suite against a real running server.
+- `docs/team-quickstart.md` — for anyone consuming a running instance
+  of this API: another APM layer, a script, or Claude via
+  `apm_connectors_mcp`.
 
 ## Layout
 
