@@ -256,6 +256,12 @@ resource "aws_ssm_parameter" "salesforce_client_secret" {
   value = var.salesforce_client_secret != "" ? var.salesforce_client_secret : "unset"
 }
 
+resource "aws_ssm_parameter" "jira_api_token" {
+  name  = "/${var.app_name}/JIRA_API_TOKEN"
+  type  = "SecureString"
+  value = var.jira_api_token != "" ? var.jira_api_token : "unset"
+}
+
 # Only created when set -- unlike the two secrets above, this one has no
 # "unset" placeholder: an unconfigured GOOGLE_TOKEN_JSON should mean the
 # app falls back to the interactive/local-file flow (src/apm_connectors/
@@ -273,6 +279,7 @@ locals {
     [
       aws_ssm_parameter.google_client_secret.arn,
       aws_ssm_parameter.salesforce_client_secret.arn,
+      aws_ssm_parameter.jira_api_token.arn,
     ],
     var.google_token_json != "" ? [aws_ssm_parameter.google_token_json[0].arn] : []
   )
@@ -281,6 +288,7 @@ locals {
     [
       { name = "GOOGLE_CLIENT_SECRET", valueFrom = aws_ssm_parameter.google_client_secret.arn },
       { name = "SALESFORCE_CLIENT_SECRET", valueFrom = aws_ssm_parameter.salesforce_client_secret.arn },
+      { name = "JIRA_API_TOKEN", valueFrom = aws_ssm_parameter.jira_api_token.arn },
     ],
     var.google_token_json != "" ? [{ name = "GOOGLE_TOKEN_JSON", valueFrom = aws_ssm_parameter.google_token_json[0].arn }] : []
   )
@@ -314,6 +322,8 @@ resource "aws_ecs_task_definition" "this" {
         { name = "SALESFORCE_CLIENT_ID", value = var.salesforce_client_id },
         { name = "SALESFORCE_DOMAIN", value = var.salesforce_domain },
         { name = "SALESFORCE_API_VERSION", value = var.salesforce_api_version },
+        { name = "JIRA_BASE_URL", value = var.jira_base_url },
+        { name = "JIRA_EMAIL", value = var.jira_email },
       ]
       secrets = local.container_secrets
       logConfiguration = {
@@ -374,6 +384,7 @@ resource "null_resource" "force_new_deployment" {
       var.google_client_secret,
       var.google_token_json,
       var.salesforce_client_secret,
+      var.jira_api_token,
     ]))
   }
 

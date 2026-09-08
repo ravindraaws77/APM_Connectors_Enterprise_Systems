@@ -27,9 +27,9 @@ your AWS credentials itself.
   traffic to the task).
 - An execution role the task uses to pull the image, write logs, and
   read the secrets from SSM.
-- Two SSM Parameter Store `SecureString` entries for the connectors'
-  client secrets (`GOOGLE_CLIENT_SECRET`, `SALESFORCE_CLIENT_SECRET`) —
-  never a plain environment variable.
+- Three SSM Parameter Store `SecureString` entries for the connectors'
+  secrets (`GOOGLE_CLIENT_SECRET`, `SALESFORCE_CLIENT_SECRET`,
+  `JIRA_API_TOKEN`) — never a plain environment variable.
 - A CloudWatch log group for the container's stdout/stderr.
 
 Every connector env var is optional and empty by default, exactly like
@@ -160,6 +160,24 @@ then `terraform apply`. `salesforce_client_secret` is stored as an SSM
 `SecureString`, the same as the Google client secret; the other three
 are plain environment variables on the task, since they're not
 sensitive on their own.
+
+## Enabling real Jira on this deployment
+
+Like Salesforce, Jira needs no interactive/browser flow — it
+authenticates with a plain Atlassian API token (Basic auth: account
+email + token), so there's no local pre-flight step either. Just set,
+in `terraform.tfvars`:
+
+```
+jira_base_url = "https://yourcompany.atlassian.net"
+jira_email    = "you@yourcompany.com"
+jira_api_token = "..."
+```
+
+then `terraform apply`. `jira_api_token` is stored as an SSM
+`SecureString`, the same as the Google/Salesforce secrets;
+`jira_base_url`/`jira_email` are plain environment variables on the
+task, since they're not sensitive on their own.
 
 ## Known limitations (MVP tradeoff, same as running locally)
 
