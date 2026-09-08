@@ -11,9 +11,8 @@ Connected App's "run as" user rather than a specific human's session (an
 org admin decides that mapping when setting up the Connected App).
 
 Access tokens from this flow are short-lived and cheap to re-request, so
-unlike ms_graph_auth.py's device-code flow there is no local token cache
-to manage here -- a fresh token is requested each time a SalesforceTool is
-built.
+there is no local token cache to manage here -- a fresh token is
+requested each time a SalesforceTool is built.
 
 `requests` is imported lazily so the rest of the codebase (and any test
 that only exercises SalesforceTool's logic with a fake client) doesn't

@@ -143,7 +143,7 @@ def _execute_node(tools: dict[str, BaseTool], state_store: StateStore):
 
 
 def build_action_graph(tools: dict[str, BaseTool], state_store: StateStore, checkpointer: Any):
-    """`tools` keys are tool names ("gmail", "google_calendar", "ms_excel",
+    """`tools` keys are tool names ("gmail", "google_calendar",
     "excel_file"); execute_node looks up whichever one a proposed action
     names. `checkpointer` is required explicitly (rather than defaulting
     to MemorySaver here) so callers decide the persistence story.

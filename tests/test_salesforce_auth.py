@@ -24,9 +24,6 @@ def _settings(
     return Settings(
         google_client_id=None,
         google_client_secret=None,
-        ms_graph_client_id=None,
-        ms_graph_client_secret=None,
-        ms_graph_tenant_id=None,
         excel_workbook_path=None,
         excel_drive_file_id=None,
         state_dir=Path("state"),

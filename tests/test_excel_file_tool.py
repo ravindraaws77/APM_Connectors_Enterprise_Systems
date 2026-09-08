@@ -20,9 +20,6 @@ def _settings(*, excel_workbook_path: str | None = None, excel_drive_file_id: st
     return Settings(
         google_client_id=None,
         google_client_secret=None,
-        ms_graph_client_id=None,
-        ms_graph_client_secret=None,
-        ms_graph_tenant_id=None,
         excel_workbook_path=excel_workbook_path,
         excel_drive_file_id=excel_drive_file_id,
         state_dir=Path("state"),

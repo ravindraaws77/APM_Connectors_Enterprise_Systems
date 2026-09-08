@@ -1,23 +1,18 @@
 """Excel connector for workbooks that are actual .xlsx files sitting
-locally on disk or stored as files in Google Drive — distinct from
-`excel_tool.py`, which only operates on workbooks already living on
-OneDrive/SharePoint via Microsoft Graph and has no concept of a local
-file or a plain Drive-hosted one.
+locally on disk or stored as files in Google Drive.
 
 Both a local file and a Google Drive file are just a source of .xlsx
-bytes to this connector: `WorkbookSource` is the abstraction (parallel to
-excel_tool.ExcelClient), with `LocalWorkbookSource` and
-`GoogleDriveWorkbookSource` as the two implementations. The bytes are
-parsed/edited with openpyxl — there's no cell-range API to call for
-either source, unlike Graph's Excel API.
+bytes to this connector: `WorkbookSource` is the abstraction, with
+`LocalWorkbookSource` and `GoogleDriveWorkbookSource` as the two
+implementations. The bytes are parsed/edited with openpyxl — there's
+no cell-range API to call for either source.
 
 Read (list worksheets, read a range) and write (overwrite a range) are
 both implemented here, following the same dry_run-gated pattern as
-excel_tool.ExcelTool.write_range: write_range defaults to dry_run=True
-and must only ever be called with dry_run=False from inside the agent
-graph's execute_node, after an approved human interrupt (see
-.claude/skills/tool-integration/SKILL.md). It is not yet wired into
-apm_connectors.agent.graph — same status as the MS Excel connector's write_range.
+every other connector's write/action methods: write_range defaults to
+dry_run=True and must only ever be called with dry_run=False from
+inside the agent graph's execute_node, after an approved human
+interrupt (see .claude/skills/tool-integration/SKILL.md).
 
 Known gap: read_range loads with data_only=True to return each formula
 cell's last-calculated value rather than the formula text, but openpyxl
