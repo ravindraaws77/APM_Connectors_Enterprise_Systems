@@ -250,12 +250,6 @@ resource "aws_ssm_parameter" "google_client_secret" {
   value = var.google_client_secret != "" ? var.google_client_secret : "unset"
 }
 
-resource "aws_ssm_parameter" "ms_graph_client_secret" {
-  name  = "/${var.app_name}/MS_GRAPH_CLIENT_SECRET"
-  type  = "SecureString"
-  value = var.ms_graph_client_secret != "" ? var.ms_graph_client_secret : "unset"
-}
-
 resource "aws_ssm_parameter" "salesforce_client_secret" {
   name  = "/${var.app_name}/SALESFORCE_CLIENT_SECRET"
   type  = "SecureString"
@@ -278,7 +272,6 @@ locals {
   ssm_secret_arns = concat(
     [
       aws_ssm_parameter.google_client_secret.arn,
-      aws_ssm_parameter.ms_graph_client_secret.arn,
       aws_ssm_parameter.salesforce_client_secret.arn,
     ],
     var.google_token_json != "" ? [aws_ssm_parameter.google_token_json[0].arn] : []
@@ -287,7 +280,6 @@ locals {
   container_secrets = concat(
     [
       { name = "GOOGLE_CLIENT_SECRET", valueFrom = aws_ssm_parameter.google_client_secret.arn },
-      { name = "MS_GRAPH_CLIENT_SECRET", valueFrom = aws_ssm_parameter.ms_graph_client_secret.arn },
       { name = "SALESFORCE_CLIENT_SECRET", valueFrom = aws_ssm_parameter.salesforce_client_secret.arn },
     ],
     var.google_token_json != "" ? [{ name = "GOOGLE_TOKEN_JSON", valueFrom = aws_ssm_parameter.google_token_json[0].arn }] : []
@@ -317,8 +309,6 @@ resource "aws_ecs_task_definition" "this" {
       ]
       environment = [
         { name = "GOOGLE_CLIENT_ID", value = var.google_client_id },
-        { name = "MS_GRAPH_CLIENT_ID", value = var.ms_graph_client_id },
-        { name = "MS_GRAPH_TENANT_ID", value = var.ms_graph_tenant_id },
         { name = "APM_EXCEL_WORKBOOK_PATH", value = var.apm_excel_workbook_path },
         { name = "APM_EXCEL_DRIVE_FILE_ID", value = var.apm_excel_drive_file_id },
         { name = "SALESFORCE_CLIENT_ID", value = var.salesforce_client_id },
@@ -382,7 +372,6 @@ resource "null_resource" "force_new_deployment" {
     dockerfile_hash = local.dockerfile_hash
     secrets_hash = sha1(join("", [
       var.google_client_secret,
-      var.ms_graph_client_secret,
       var.google_token_json,
       var.salesforce_client_secret,
     ]))

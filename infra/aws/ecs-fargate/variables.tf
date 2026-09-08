@@ -61,25 +61,6 @@ variable "google_token_json" {
   sensitive   = true
 }
 
-variable "ms_graph_client_id" {
-  description = "Microsoft Graph app registration client ID, for the OneDrive/SharePoint Excel connector."
-  type        = string
-  default     = ""
-}
-
-variable "ms_graph_client_secret" {
-  description = "Microsoft Graph app registration client secret. Stored as an SSM SecureString, never a plain env var."
-  type        = string
-  default     = ""
-  sensitive   = true
-}
-
-variable "ms_graph_tenant_id" {
-  description = "Microsoft Graph tenant ID."
-  type        = string
-  default     = ""
-}
-
 variable "apm_excel_workbook_path" {
   description = "Local path (inside the container) to an Excel workbook, if using the local-file Excel connector. Usually left unset in favor of apm_excel_drive_file_id for a cloud deployment, since the container filesystem is ephemeral."
   type        = string

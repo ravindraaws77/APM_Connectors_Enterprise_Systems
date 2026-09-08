@@ -27,9 +27,9 @@ your AWS credentials itself.
   traffic to the task).
 - An execution role the task uses to pull the image, write logs, and
   read the secrets from SSM.
-- Three SSM Parameter Store `SecureString` entries for the connectors'
-  client secrets (`GOOGLE_CLIENT_SECRET`, `MS_GRAPH_CLIENT_SECRET`,
-  `SALESFORCE_CLIENT_SECRET`) — never a plain environment variable.
+- Two SSM Parameter Store `SecureString` entries for the connectors'
+  client secrets (`GOOGLE_CLIENT_SECRET`, `SALESFORCE_CLIENT_SECRET`) —
+  never a plain environment variable.
 - A CloudWatch log group for the container's stdout/stderr.
 
 Every connector env var is optional and empty by default, exactly like
@@ -157,8 +157,8 @@ salesforce_domain        = "my-org-dev-ed.develop.my.salesforce.com"
 ```
 
 then `terraform apply`. `salesforce_client_secret` is stored as an SSM
-`SecureString`, the same as the Google/MS Graph secrets; the other
-three are plain environment variables on the task, since they're not
+`SecureString`, the same as the Google client secret; the other three
+are plain environment variables on the task, since they're not
 sensitive on their own.
 
 ## Known limitations (MVP tradeoff, same as running locally)
