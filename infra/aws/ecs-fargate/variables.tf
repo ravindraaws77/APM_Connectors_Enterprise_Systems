@@ -97,3 +97,22 @@ variable "salesforce_api_version" {
   type        = string
   default     = ""
 }
+
+variable "jira_base_url" {
+  description = "Jira Cloud site base URL, e.g. \"https://yourcompany.atlassian.net\"."
+  type        = string
+  default     = ""
+}
+
+variable "jira_email" {
+  description = "Atlassian account email the API token belongs to."
+  type        = string
+  default     = ""
+}
+
+variable "jira_api_token" {
+  description = "Atlassian API token (Basic auth, paired with jira_email) -- create one at https://id.atlassian.com/manage-profile/security/api-tokens. Stored as an SSM SecureString, never a plain env var."
+  type        = string
+  default     = ""
+  sensitive   = true
+}

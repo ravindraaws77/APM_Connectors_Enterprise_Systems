@@ -12,3 +12,6 @@ app_name   = "apm-connectors"
 # salesforce_client_secret = ""
 # salesforce_domain        = ""  # e.g. "my-org-dev-ed.develop.my.salesforce.com"
 # salesforce_api_version   = ""  # e.g. "v60.0" -- leave unset to use the connector's default
+# jira_base_url  = ""  # e.g. "https://yourcompany.atlassian.net"
+# jira_email     = ""
+# jira_api_token = ""
