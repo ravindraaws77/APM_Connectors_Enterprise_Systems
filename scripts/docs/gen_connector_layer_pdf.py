@@ -35,9 +35,10 @@ story = []
 story.append(Paragraph("Connector Layer — apm_connectors/tools/", styles["title"]))
 story.append(Paragraph(
     "The Python constructs this layer adds on top of the FastAPI/Action Graph docs, a from-zero "
-    "tutorial on why a common connector interface exists, then a complete deep dive into this repo's "
-    "connectors and the design patterns they use — written as a standalone reference, including for "
-    "interview prep.",
+    "tutorial on why a common connector interface exists, a complete deep dive into this repo's "
+    "connectors, a per-tool reference covering all five (Gmail, Calendar, Excel, Salesforce, Jira) and "
+    "how they interact, and the design patterns they use — written as a standalone reference, "
+    "including for interview prep.",
     styles["subtitle"],
 ))
 story.append(rule())
@@ -242,7 +243,7 @@ story.append(simple_table(
     [1.6 * inch, (USABLE_W - 1.6 * inch) / 2, (USABLE_W - 1.6 * inch) / 2],
 ))
 story.append(bl(
-    "This contrast is worth sitting with (it reappears explicitly in §3): ABC is the right tool when "
+    "This contrast is worth sitting with (it reappears explicitly in §4): ABC is the right tool when "
     "you own every implementation and want Python to actively enforce completeness at construction "
     "time (§0.1). Protocol is the right tool when you don't want to force unrelated things (a real "
     "API client, a test fake) into a shared inheritance hierarchy just to prove they're interchangeable."
@@ -486,9 +487,202 @@ story.append(bl(
 story.append(rule())
 
 # ---------------------------------------------------------------------------
-# PART 3 — DESIGN PATTERNS, NAMED
+# PART 3 — THE OTHER FOUR CONNECTORS, AND HOW THE WHOLE LAYER INTERACTS
 # ---------------------------------------------------------------------------
-story.append(h1("Part 3 — Design patterns used here, named explicitly"))
+story.append(h1("Part 3 — The other four connectors, and how the whole layer interacts"))
+story.append(bl(
+    "Gmail (§2.4-2.6) was the worked example because it's the smallest complete one. The other four "
+    "— Calendar, Excel, Salesforce, Jira — follow the exact same BaseTool shape (§2.3): a Protocol-"
+    "typed client, a dataclass for normalized results, read methods that run immediately, write/action "
+    "methods gated by dry_run + require_dry_run_guard. What's actually worth knowing about each is "
+    "where it differs — its auth mechanism and its specific quirks — plus how all five get wired "
+    "together into one running server."
+))
+
+story.append(h2("3.1 Google Calendar — the same shape as Gmail, one write method"))
+story.append(code_block(
+    "class CalendarClient(Protocol):\n"
+    "    def list_events(self, time_min, time_max, query, max_results) -> list[dict[str, Any]]: ...\n"
+    "    def get_event(self, event_id: str) -> dict[str, Any]: ...\n"
+    "    def insert_event(self, payload: dict[str, Any]) -> dict[str, Any]: ...\n\n"
+    "class CalendarTool(BaseTool):\n"
+    "    name = \"google_calendar\"\n"
+    "    capabilities = frozenset({Capability.READ, Capability.ACTION})\n"
+))
+story.append(bl(
+    "<font name='Courier'>search_events</font>/<font name='Courier'>read_event</font> are reads; "
+    "<font name='Courier'>create_event</font> is the one write, single (non-recurring) events only, "
+    "RFC3339 datetimes. <font name='Courier'>ACTION</font> rather than plain "
+    "<font name='Courier'>WRITE</font> here — same as Gmail — because creating an event, like sending "
+    "an email, triggers a one-shot side effect rather than overwriting something that already exists "
+    "(contrast with Excel/Salesforce/Jira below, §3.5)."
+))
+
+story.append(h2("3.2 Excel (local file or Google Drive) — one tool, two interchangeable sources"))
+story.append(code_block(
+    "class WorkbookSource(Protocol):\n"
+    "    def describe(self) -> str: ...\n"
+    "    def read_bytes(self) -> bytes: ...\n"
+    "    def write_bytes(self, data: bytes) -> None: ...\n\n"
+    "class ExcelFileTool(BaseTool):\n"
+    "    name = \"excel_file\"\n"
+    "    capabilities = frozenset({Capability.READ, Capability.WRITE})\n"
+    "    def __init__(self, state: StateStore, source: WorkbookSource) -> None:\n"
+    "        super().__init__(state)\n"
+    "        self._source = source     # LocalWorkbookSource or GoogleDriveWorkbookSource\n"
+))
+story.append(bl(
+    "<font name='Courier'>ExcelFileTool</font> never knows or cares whether its bytes come from a "
+    "local path or a Drive file — it only ever calls <font name='Courier'>read_bytes</font>/"
+    "<font name='Courier'>write_bytes</font> on whichever <font name='Courier'>WorkbookSource</font> "
+    "it was built with, then parses/edits those bytes with openpyxl (there's no cell-range API to call "
+    "for either source). Two real quirks worth knowing: <font name='Courier'>read_range</font> loads "
+    "with <font name='Courier'>data_only=True</font>, so a formula cell that's never been opened in "
+    "real Excel/Sheets has no cached value and reads back as <font name='Courier'>None</font>; and the "
+    "Drive source requests the full <font name='Courier'>drive</font> scope rather than the narrower "
+    "<font name='Courier'>drive.file</font> scope, because <font name='Courier'>drive.file</font> only "
+    "grants access to files the app itself created — confirmed live, not just reasoned about, by a 403 "
+    "<font name='Courier'>insufficientPermissions</font> on write."
+))
+
+story.append(h2("3.3 Salesforce — server-to-server OAuth, no interactive consent"))
+story.append(code_block(
+    "class SalesforceClient(Protocol):\n"
+    "    def query(self, soql: str) -> list[dict[str, Any]]: ...\n"
+    "    def get_record(self, object_name: str, record_id: str) -> dict[str, Any]: ...\n"
+    "    def create_record(self, object_name: str, fields: dict[str, Any]) -> dict[str, Any]: ...\n"
+    "    def update_record(self, object_name, record_id, fields) -> dict[str, Any]: ...\n\n"
+    "class SalesforceTool(BaseTool):\n"
+    "    name = \"salesforce\"\n"
+    "    capabilities = frozenset({Capability.READ, Capability.WRITE})\n"
+))
+story.append(bl(
+    "<font name='Courier'>query_records</font> runs a SOQL query; "
+    "<font name='Courier'>create_record</font>/<font name='Courier'>update_record</font> are the "
+    "writes. Unlike Gmail/Calendar's user-consent OAuth (§2.7), Salesforce authenticates with OAuth "
+    "2.0's <b>Client Credentials Flow</b> against a Connected App — no browser, no redirect URI, no "
+    "human logging in; it's the app itself authenticating as a pre-configured \"Run As\" user. "
+    "<font name='Courier'>build_configured_salesforce_tool</font> acquires that access token "
+    "<i>eagerly</i>, at server startup, rather than lazily on first call — a misconfigured Connected "
+    "App then fails loudly when the server starts, not as a confusing 502 on someone's first live "
+    "request. Tokens are short-lived and cheap to re-request, so there's no local token-cache file to "
+    "manage at all, unlike Gmail/Calendar/Excel-on-Drive."
+))
+
+story.append(h2("3.4 Jira — the simplest auth of the five"))
+story.append(code_block(
+    "class JiraClient(Protocol):\n"
+    "    def search_issues(self, jql: str, max_results: int) -> list[dict[str, Any]]: ...\n"
+    "    def get_issue(self, issue_key: str) -> dict[str, Any]: ...\n"
+    "    def create_issue(self, fields: dict[str, Any]) -> dict[str, Any]: ...\n"
+    "    def update_issue(self, issue_key: str, fields: dict[str, Any]) -> dict[str, Any]: ...\n\n"
+    "class JiraTool(BaseTool):\n"
+    "    name = \"jira\"\n"
+    "    capabilities = frozenset({Capability.READ, Capability.WRITE})\n"
+))
+story.append(bl(
+    "<font name='Courier'>search_issues</font> runs a JQL query; "
+    "<font name='Courier'>create_issue</font>/<font name='Courier'>update_issue</font> are the writes. "
+    "Auth here is the simplest of all five: an Atlassian API token sent as HTTP Basic auth (account "
+    "email + token) on every request — no token exchange, no expiry to manage, nothing to cache. Two "
+    "quirks <font name='Courier'>JiraRestClient</font> works around, both found by testing against a "
+    "real Jira Cloud site rather than just reading the docs: Jira Cloud's newer "
+    "<font name='Courier'>/search/jql</font> endpoint rejects an \"unbounded\" query with no "
+    "restriction clause at all — <font name='Courier'>health_check</font> queries "
+    "<font name='Courier'>\"assignee = currentUser()\"</font> rather than a bare "
+    "<font name='Courier'>ORDER BY</font> — and it omits <font name='Courier'>key</font>/"
+    "<font name='Courier'>fields</font> from results unless a <font name='Courier'>fields</font> "
+    "param is passed explicitly, so <font name='Courier'>search_issues</font> always requests "
+    "<font name='Courier'>fields: [\"*all\"]</font> to match <font name='Courier'>get_issue</font>."
+))
+
+story.append(h2("3.5 All five, side by side"))
+story.append(simple_table(
+    [
+        ["<b>Tool</b>", "<b>Capabilities</b>", "<b>Read methods</b>", "<b>Write/action methods</b>"],
+        ["gmail", "READ, ACTION", "search_emails, read_message", "send_email"],
+        ["google_calendar", "READ, ACTION", "search_events, read_event", "create_event"],
+        ["excel_file", "READ, WRITE", "list_worksheets, read_range", "write_range"],
+        ["salesforce", "READ, WRITE", "query_records, get_record", "create_record, update_record"],
+        ["jira", "READ, WRITE", "search_issues, get_issue", "create_issue, update_issue"],
+    ],
+    [1.1 * inch, 1.1 * inch, 1.85 * inch, USABLE_W - 4.05 * inch],
+))
+story.append(bl(
+    "The <font name='Courier'>ACTION</font> vs <font name='Courier'>WRITE</font> split lines up with a "
+    "real distinction: Gmail/Calendar trigger a one-shot side effect (send, create-and-notify), while "
+    "Excel/Salesforce/Jira create-or-overwrite a persistent record you could just as easily read back "
+    "afterward. Nothing in the code branches on that distinction today — it's documentation of intent "
+    "via <font name='Courier'>Capability</font> (§0.3, §2.1), not enforced behavior."
+))
+
+story.append(h2("3.6 How five independent connectors become one dict[str, BaseTool]"))
+story.append(bl(
+    "<font name='Courier'>api.dependencies.get_tools()</font> is where the connector layer stops being "
+    "five separate modules and becomes the one object the rest of the system depends on:"
+))
+story.append(code_block(
+    "@lru_cache\n"
+    "def get_tools() -> dict[str, BaseTool]:\n"
+    "    tools: dict[str, BaseTool] = {}\n"
+    "    try:\n"
+    "        gmail_tool, calendar_tool = build_gmail_and_calendar_tools(state, settings)\n"
+    "    except RuntimeError:\n"
+    "        pass          # no Google client id/secret configured -- omit both, together\n"
+    "    else:\n"
+    "        tools[\"gmail\"] = gmail_tool\n"
+    "        tools[\"google_calendar\"] = calendar_tool\n\n"
+    "    excel_tool = build_configured_excel_tool(state, settings)\n"
+    "    if excel_tool is not None:\n"
+    "        tools[\"excel_file\"] = excel_tool\n"
+    "    # ...salesforce, jira follow the same if-not-None pattern\n"
+    "    return tools\n"
+))
+story.append(bl(
+    "Three things worth naming explicitly. First, <b>each connector is independently optional</b> — a "
+    "deployment configures whichever credentials it has, and <font name='Courier'>tools_routes.py</font>'s "
+    "<font name='Courier'>_tool</font> helper (FastAPI doc §2.4) 503s only the routes for a missing "
+    "tool, rather than the whole API failing to start. Second, <b>Gmail and Calendar are wired as a "
+    "pair</b>, not independently — <font name='Courier'>build_gmail_and_calendar_tools</font> (§2.7's "
+    "factory-function shape, applied to two tools at once) requests both tools' OAuth scopes in a "
+    "single consent, because requesting them separately against the same token file would have each "
+    "overwrite the other's cached token (google_auth.py's docstring calls this out directly — a real "
+    "bug, not a hypothetical). Excel's Drive source shares the same Google OAuth client id/secret but "
+    "deliberately writes to its <i>own</i> token-cache file for exactly the same reason. Third, "
+    "<b>execute_node (Action Graph doc §2.3) never special-cases any of this</b> — "
+    "<font name='Courier'>tools[proposed[\"tool\"]]</font> plus "
+    "<font name='Courier'>getattr(tool, proposed[\"method\"])</font> dispatches to whichever of the "
+    "five connectors and whichever of its methods a caller named, generically, because every one of "
+    "them honors the same BaseTool shape. That genericity — not any per-tool logic — is the entire "
+    "point of Part 1's \"one common interface\" argument (§1.1)."
+))
+
+story.append(h2("3.7 Auth, side by side"))
+story.append(simple_table(
+    [
+        ["<b>Tool</b>", "<b>Auth mechanism</b>", "<b>Token caching</b>"],
+        ["gmail", "Google OAuth2, user consent", ".google_token.json, shared with google_calendar"],
+        ["google_calendar", "Google OAuth2, user consent (same flow as gmail)", "same file as gmail"],
+        ["excel_file (Drive)", "Google OAuth2, user consent, full drive scope", "own file, .google_drive_token.json"],
+        ["excel_file (local)", "none", "n/a"],
+        ["salesforce", "OAuth2 Client Credentials (server-to-server)", "none -- short-lived, re-requested each process start"],
+        ["jira", "Atlassian API token, HTTP Basic", "none -- sent on every request"],
+    ],
+    [1.3 * inch, USABLE_W - 1.3 * inch - 2.0 * inch, 2.0 * inch],
+))
+story.append(bl(
+    "The pattern across all five: only Gmail/Calendar/Excel-on-Drive need an interactive human consent "
+    "step at all, and only because they act as a real Google end user. Salesforce and Jira are both "
+    "server-to-server from the start — no human ever \"logs in\" as them, which is also why their "
+    "factories (§2.7's shape) need no <font name='Courier'>token_path</font> argument at all."
+))
+
+story.append(rule())
+
+# ---------------------------------------------------------------------------
+# PART 4 — DESIGN PATTERNS, NAMED
+# ---------------------------------------------------------------------------
+story.append(h1("Part 4 — Design patterns used here, named explicitly"))
 patterns = [
     ["<b>Pattern</b>", "<b>Where</b>", "<b>What problem it actually solves here</b>"],
     ["Template Method (via ABC)",
@@ -512,15 +706,21 @@ patterns = [
     ["Factory Function",
      "build_gmail_tool(state, settings)",
      "Same shape as create_app()/build_action_graph() -- take dependencies, run setup, return a built object; tests bypass it entirely."],
+    ["Strategy",
+     "WorkbookSource: LocalWorkbookSource vs. GoogleDriveWorkbookSource (§3.2)",
+     "ExcelFileTool reads/writes bytes through one interface without caring which backing store it is -- the source is swapped at construction time, not branched on at call time."],
+    ["Optional component wiring",
+     "get_tools() (§3.6) -- each connector's build_configured_*_tool returns None when unconfigured",
+     "A deployment missing one tool's credentials loses only that tool's routes (a per-route 503), never the whole API failing to start."],
 ]
 story.append(simple_table(patterns, [1.5 * inch, 1.7 * inch, USABLE_W - 3.2 * inch]))
 
 story.append(rule())
 
 # ---------------------------------------------------------------------------
-# PART 4 — INTERVIEW-PREP CHEAT SHEET
+# PART 5 — INTERVIEW-PREP CHEAT SHEET
 # ---------------------------------------------------------------------------
-story.append(h1("Part 4 — Interview-prep Q&A"))
+story.append(h1("Part 5 — Interview-prep Q&A"))
 story.append(bl("Practice answering by pointing at the actual code, not reciting the definition."))
 
 qa = [
@@ -568,6 +768,32 @@ qa = [
      "require_dry_run_guard at the top of every write/action method before checking dry_run. If the "
      "connector wraps a real HTTP client, define a minimal Protocol for exactly the methods needed, "
      "the same way GmailClient does, rather than depending on the third-party SDK's full client type."),
+    ("Q: Why are Gmail and Calendar built together in get_tools(), instead of each independently like "
+     "Excel/Salesforce/Jira?",
+     "A: Because they share one Google OAuth consent screen and one token-cache file. Requesting "
+     "Gmail's scopes and Calendar's scopes in two separate load_credentials() calls against the same "
+     "cache file would have the second call's consent silently overwrite the first tool's cached "
+     "token -- google_auth.py's docstring documents this as a real failure mode, not a hypothetical. "
+     "build_gmail_and_calendar_tools requests every scope both tools need in one call, so one consent "
+     "covers both, and if that fails (no Google client id/secret configured), both are omitted "
+     "together rather than one succeeding and the other silently missing (§3.6)."),
+    ("Q: Why does Salesforce use a completely different auth flow from Jira, when both are read/write "
+     "connectors over HTTP?",
+     "A: They're solving different trust problems. Salesforce's Client Credentials Flow authenticates "
+     "the app itself as a specific 'Run As' service user via a Connected App -- appropriate for "
+     "org-level integrations where an admin explicitly provisions and scopes that user's permissions. "
+     "Jira's API token is simpler because Atlassian's model ties the token directly to one human "
+     "account's existing permissions -- no separate app registration or service-user concept needed. "
+     "Neither needs a browser consent step, unlike Gmail/Calendar/Excel-on-Drive, because both are "
+     "server-to-server from the start (§3.7)."),
+    ("Q: How does Excel support both a local file and a Google Drive file without ExcelFileTool having "
+     "two code paths?",
+     "A: WorkbookSource (§3.2) is a Protocol with exactly three methods -- describe, read_bytes, "
+     "write_bytes. ExcelFileTool only ever calls those three methods; it has no idea whether the bytes "
+     "came from Path.read_bytes() or a Drive API download. LocalWorkbookSource and "
+     "GoogleDriveWorkbookSource are two interchangeable Strategy implementations chosen once, at "
+     "construction time, by build_local_excel_tool/build_gdrive_excel_tool -- the Strategy pattern, "
+     "concretely."),
 ]
 for q, a in qa:
     story.append(caption(q))
@@ -603,9 +829,11 @@ story.append(vt)
 
 story.append(Spacer(1, 10))
 story.append(bl(
-    "That's the whole layer: one shared contract (BaseTool), one narrow retry helper, and five "
-    "connectors that all look identical from the outside — each one's actual write path defended by "
-    "the same three independent layers, whether it's sending an email or updating a Salesforce record."
+    "That's the whole layer: one shared contract (BaseTool), one narrow retry helper, five connectors "
+    "each with their own auth mechanism and quirks (§3.1-3.7) but all identically shaped from the "
+    "outside, and one dict (get_tools()) that wires them into a running server — each connector's "
+    "actual write path defended by the same three independent layers, whether it's sending an email or "
+    "updating a Salesforce record."
 ))
 
 OUT.parent.mkdir(parents=True, exist_ok=True)
