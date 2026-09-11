@@ -63,6 +63,12 @@ def _build(pool: ConnectionPool):
 @pytest.fixture
 def pool():
     p = _pool()
+    # PostgresStateStore.__init__ creates apm_processes/apm_events/
+    # apm_pending_actions if they don't exist yet (idempotent) -- needed
+    # here because this fixture runs first on a brand-new test database,
+    # before anything else has had a chance to create them, and TRUNCATE
+    # below fails on a table that was never created.
+    PostgresStateStore(p)
     with p.connection() as conn:
         conn.execute("TRUNCATE apm_processes, apm_events, apm_pending_actions")
         conn.execute(
