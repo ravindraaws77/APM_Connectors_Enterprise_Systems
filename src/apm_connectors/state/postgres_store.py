@@ -92,6 +92,15 @@ class PostgresStateStore:
             self._pool = ConnectionPool(
                 dsn_or_pool,
                 kwargs={"autocommit": True, "prepare_threshold": None, "row_factory": dict_row},
+                # check=check_connection: verify a connection is actually
+                # alive before handing it out, replacing it transparently
+                # if not. Without this, a connection killed by the server
+                # while idle in the pool (e.g. a serverless Postgres like
+                # Neon suspending its compute after a few idle minutes) is
+                # handed out anyway and every call using it fails with
+                # "SSL connection has been closed unexpectedly" until the
+                # process restarts -- live-verified against Neon.
+                check=ConnectionPool.check_connection,
                 open=True,
             )
             self._owns_pool = True
