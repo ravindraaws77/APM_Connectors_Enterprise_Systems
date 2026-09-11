@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
 """Generate 'FastAPI Layer -- apm_connectors/api/' reference PDF: a
-from-zero FastAPI tutorial for a newcomer, then a full deep dive into
-this repo's API layer and the design patterns it uses -- written to
-double as interview-prep material. See scripts/docs/README.md for the
-overall doc-generation convention.
+from-zero Python syntax primer, a from-zero FastAPI tutorial, then a
+full deep dive into this repo's API layer and the design patterns it
+uses -- written to double as interview-prep material. See
+scripts/docs/README.md for the overall doc-generation convention.
 
 Run standalone with `python scripts/docs/gen_fastapi_layer_pdf.py`;
 writes docs/fastapi-layer-reference.pdf by default (override with the
@@ -31,10 +31,218 @@ story = []
 # ===========================================================================
 story.append(Paragraph("FastAPI Layer — apm_connectors/api/", styles["title"]))
 story.append(Paragraph(
-    "A from-zero FastAPI tutorial, then a complete deep dive into this repo's API layer and the "
-    "design patterns it uses — written as a standalone reference, including for interview prep.",
+    "A from-zero Python syntax primer, a from-zero FastAPI tutorial, then a complete deep dive into "
+    "this repo's API layer and the design patterns it uses — written as a standalone reference, "
+    "including for interview prep.",
     styles["subtitle"],
 ))
+story.append(rule())
+
+# ---------------------------------------------------------------------------
+# PART 0 — PYTHON SYNTAX PRIMER
+# ---------------------------------------------------------------------------
+story.append(h1("Part 0 — Python syntax you'll see throughout this document"))
+story.append(bl(
+    "If you're new to Python, read this part first — every construct here reappears constantly in "
+    "Parts 1-4. Each one is explained with a plain toy example, then the actual line from this "
+    "codebase that uses it."
+))
+
+story.append(h2("0.1 Imports — how one file uses code from another"))
+story.append(code_block(
+    "from fastapi import FastAPI          # \"from the fastapi package, bring in the name FastAPI\"\n"
+    "import os                            # \"bring in the whole os module; refer to it as os.something\"\n"
+    "from apm_connectors.graph import resume_process, start_action\n"
+))
+story.append(bl(
+    "A <i>module</i> is just one <font name='Courier'>.py</font> file; a <i>package</i> is a folder "
+    "of modules (like <font name='Courier'>apm_connectors.api</font>, the folder this whole document "
+    "is about). <font name='Courier'>from X import Y</font> pulls one specific name — a function, a "
+    "class, a variable — out of module/package X so you can use it directly by that name, instead of "
+    "writing <font name='Courier'>X.Y</font> every time."
+))
+
+story.append(h2("0.2 Functions — parameters, default values, return type hints"))
+story.append(code_block(
+    "def greet(name, excited=False):        # `excited` has a default -- calling greet(\"Sam\") is fine\n"
+    "    if excited:\n"
+    "        return name + \"!\"\n"
+    "    return name\n\n"
+    "greet(\"Sam\")             # \"Sam\"   -- excited defaults to False\n"
+    "greet(\"Sam\", True)       # \"Sam!\"\n"
+    "greet(name=\"Sam\")        # same as the first call, but naming the argument explicitly\n"
+))
+story.append(bl(
+    "Any parameter with <font name='Courier'>= something</font> after it becomes optional — the "
+    "caller may omit it, and the default is used. Calling with <font name='Courier'>name=\"Sam\"</font> "
+    "instead of just <font name='Courier'>\"Sam\"</font> is a <i>keyword argument</i> — same effect, "
+    "more explicit at the call site. This repo's route functions do this constantly: "
+    "<font name='Courier'>def list_items(limit: int = 10):</font> means <font name='Courier'>limit</font> "
+    "is optional and defaults to 10."
+))
+
+story.append(h2("0.3 Type hints — annotations that tools read, but plain Python doesn't enforce"))
+story.append(bl(
+    "Writing <font name='Courier'>x: int</font> instead of just <font name='Courier'>x</font> "
+    "<i>documents</i> that x should be an integer — bare Python itself does not stop you from passing "
+    "a string anyway. What makes type hints load-bearing in this codebase specifically is that "
+    "<b>Pydantic and FastAPI read them at runtime</b> and actively validate against them (§1.4) — the "
+    "hint stops being just a comment and becomes an enforced rule, but only because a library chose "
+    "to enforce it, not because Python itself does."
+))
+story.append(code_block(
+    "age: int                    # a plain int\n"
+    "name: str | None = None     # either a str, or None -- and optional, since it has a default\n"
+    "tags: list[str]             # a list containing only strings\n"
+    "tools: dict[str, BaseTool]  # a dict whose keys are str and whose values are BaseTool instances\n"
+))
+story.append(bl(
+    "<font name='Courier'>X | None</font> (Python 3.10+) is the modern way to write \"this is either "
+    "type X, or the value None\" — you may also see the older, equivalent "
+    "<font name='Courier'>Optional[X]</font> from the <font name='Courier'>typing</font> module in "
+    "other codebases; they mean the same thing. <font name='Courier'>list[str]</font> and "
+    "<font name='Courier'>dict[str, X]</font> are <i>generic</i> type hints — they say not just \"a "
+    "list\" but \"a list of specifically these\". You'll see this exact shape everywhere in "
+    "schemas.py: <font name='Courier'>process_id: str | None = None</font> — optional, defaults to "
+    "None if the caller doesn't send one."
+))
+
+story.append(h2("0.4 Classes — self, inheritance, and attribute declarations"))
+story.append(code_block(
+    "class Animal:\n"
+    "    def __init__(self, name):     # runs automatically when you write Animal(\"Rex\")\n"
+    "        self.name = name          # `self` = \"this particular instance\"\n"
+    "    def speak(self):\n"
+    "        return self.name + \" makes a sound\"\n\n"
+    "class Dog(Animal):                # Dog inherits everything Animal has, then can add/override\n"
+    "    def speak(self):\n"
+    "        return self.name + \" barks\"\n\n"
+    "Dog(\"Rex\").speak()   # \"Rex barks\"\n"
+))
+story.append(bl(
+    "<font name='Courier'>self</font> is just a name (by convention, always the first parameter of a "
+    "method) referring to the specific instance the method was called on — Python passes it in "
+    "automatically whenever you write <font name='Courier'>instance.method()</font>; you never pass "
+    "it yourself. <font name='Courier'>class Dog(Animal):</font> means Dog <i>inherits</i> from "
+    "Animal — it starts with everything Animal has, and can add new behavior or override existing "
+    "methods. Pydantic's <font name='Courier'>BaseModel</font> (§1.4) uses this exact mechanism: "
+    "every request schema in this repo is <font name='Courier'>class SomeRequest(BaseModel):</font>, "
+    "inheriting all of Pydantic's validation behavior for free."
+))
+story.append(bl(
+    "One more thing worth flagging because it looks unusual the first time: inside a "
+    "<font name='Courier'>BaseModel</font> subclass, a line like <font name='Courier'>name: "
+    "str</font> with no <font name='Courier'>self.</font> and no function body is <i>not</i> a "
+    "regular Python statement — it's Pydantic-specific class syntax declaring \"this model has a "
+    "required field called name, of type str\". You won't see this pattern outside of Pydantic "
+    "models (and the similar standard-library <font name='Courier'>@dataclass</font>)."
+))
+
+story.append(h2("0.5 Decorators — what @something above a function actually does"))
+story.append(bl(
+    "A decorator is a function that takes your function as input and gives back a (possibly "
+    "different) function. Writing <font name='Courier'>@decorator</font> directly above a "
+    "<font name='Courier'>def</font> is shorthand for calling the decorator on it afterward:"
+))
+story.append(code_block(
+    "@app.get(\"/health\")\n"
+    "def health():\n"
+    "    ...\n\n"
+    "# is (roughly) shorthand for:\n\n"
+    "def health():\n"
+    "    ...\n"
+    "health = app.get(\"/health\")(health)     # app.get(...) returns a decorator, which wraps health\n"
+))
+story.append(bl(
+    "This is how a library \"registers\" or \"wraps\" your function without you writing an extra line "
+    "of registration code yourself. <font name='Courier'>@app.get(\"/health\")</font> registers the "
+    "function as a route handler (§1.2); <font name='Courier'>@lru_cache</font> (§2.3) wraps a "
+    "function so repeated calls with the same arguments return a cached result instead of "
+    "recomputing. Same mechanism both times — only what the decorator <i>does</i> to your function "
+    "differs."
+))
+
+story.append(h2("0.6 f-strings — building a string with values inside it"))
+story.append(code_block(
+    'name = "Sam"\n'
+    'greeting = f"Hello, {name}!"     # "Hello, Sam!" -- whatever\'s inside {} is evaluated and inserted\n'
+))
+story.append(bl(
+    "The <font name='Courier'>f</font> right before the opening quote is what activates this — "
+    "without it, <font name='Courier'>{name}</font> would just be four literal characters, not a "
+    "substitution. This repo builds human-readable audit descriptions this way constantly: "
+    "<font name='Courier'>f\"Create Salesforce {body.object_name} record\"</font>."
+))
+
+story.append(h2("0.7 Dicts, lists, and comprehensions"))
+story.append(code_block(
+    '{"to": to, "subject": subject}          # a dict literal -- key: value pairs\n'
+    "[r.__dict__ for r in results]           # a list comprehension\n\n"
+    "# the comprehension above is shorthand for:\n"
+    "output = []\n"
+    "for r in results:\n"
+    "    output.append(r.__dict__)\n"
+))
+story.append(bl(
+    "A <i>list comprehension</i> — <font name='Courier'>[expression for item in iterable]</font> — "
+    "builds a new list in one line instead of a multi-line for-loop with "
+    "<font name='Courier'>.append(...)</font>; every read route in this repo ends with exactly this "
+    "shape to convert a list of connector objects into plain JSON-able dicts. "
+    "<font name='Courier'>r.__dict__</font> is worth knowing specifically: every ordinary Python "
+    "object keeps its attributes internally as a dict named <font name='Courier'>__dict__</font> — "
+    "accessing it directly is a quick way to turn an object into a plain "
+    "<font name='Courier'>dict</font> FastAPI can serialize to JSON."
+))
+
+story.append(h2("0.8 Exception handling — try/except, and raise ... from ..."))
+story.append(code_block(
+    "try:\n"
+    "    risky_call()\n"
+    "except ValueError as exc:      # only catches ValueError -- others propagate up\n"
+    "    handle(exc)\n\n"
+    "try:\n"
+    "    results = tool.query_records(process_id, soql=body.soql)\n"
+    "except Exception as exc:\n"
+    "    raise upstream_error(exc) from exc    # wraps exc, keeping it attached\n"
+))
+story.append(bl(
+    "<font name='Courier'>except Exception as exc:</font> catches the error and binds it to the "
+    "name <font name='Courier'>exc</font> so you can inspect or reuse it. "
+    "<font name='Courier'>raise NewError(...) from exc</font> is Python's <i>exception chaining</i>: "
+    "it raises a new, more specific exception (in this repo, always an "
+    "<font name='Courier'>HTTPException</font> — §1.7) while keeping the original exception attached "
+    "as context, so a server-side traceback shows both \"here's the clean error the caller saw\" and "
+    "\"here's what actually broke underneath it\", instead of losing the original cause."
+))
+
+story.append(h2("0.9 async def and await — a quick pointer"))
+story.append(bl(
+    "You'll see <font name='Courier'>async def</font> instead of plain <font name='Courier'>def</font> "
+    "on some functions, and <font name='Courier'>await</font> before some calls inside them. This is "
+    "covered properly in §1.6 once you've seen how FastAPI runs — the short version for now: "
+    "<font name='Courier'>async def</font> marks a function as one that can pause and let other work "
+    "happen while it waits on something slow (a network call), and "
+    "<font name='Courier'>await</font> marks exactly where it pauses."
+))
+
+story.append(h2("0.10 A local import inside a function body"))
+story.append(code_block(
+    "def get_state_store():\n"
+    "    if settings.database_url:\n"
+    "        from apm_connectors.state.postgres_store import PostgresStateStore   # imported HERE, not at the top of the file\n"
+    "        return PostgresStateStore(...)\n"
+    "    return StateStore()\n"
+))
+story.append(bl(
+    "Imports usually live at the very top of a file, but here's one deliberately placed inside the "
+    "function instead. This delays loading the Postgres driver until this exact line actually runs — "
+    "which only happens if <font name='Courier'>DATABASE_URL</font> is set. Without this, importing "
+    "<font name='Courier'>apm_connectors.api.dependencies</font> at all would require the Postgres "
+    "driver to be installed, even for a deployment that never sets "
+    "<font name='Courier'>DATABASE_URL</font> and only wants the zero-infrastructure file-backed "
+    "default (§2.3). You'll see this same local-import pattern again for the same reason."
+))
+
 story.append(rule())
 
 # ---------------------------------------------------------------------------
@@ -553,6 +761,12 @@ for q, a in qa:
 story.append(Spacer(1, 10))
 story.append(h1("Vocabulary cheat-sheet"))
 vocab = [
+    ["Type hint (x: int)", "Advisory annotation of expected type -- ignored by plain Python at runtime, but read and enforced by Pydantic/FastAPI (§0.3)."],
+    ["X | None", "Union type meaning \"X, or None\" (Python 3.10+); older code writes the equivalent Optional[X] instead."],
+    ["Decorator (@x)", "A function that wraps another function, applied via @ syntax right above a def (§0.5) -- e.g. @app.get(...), @lru_cache."],
+    ["List comprehension", "[expr for item in iterable] -- builds a list in one line instead of a for-loop with .append() (§0.7)."],
+    ["f-string (f\"...\")", "A string literal that evaluates {expressions} inside it and substitutes the result (§0.6)."],
+    ["raise X from Y", "Exception chaining -- raises a new exception while keeping the original one attached as its cause (§0.8)."],
     ["ASGI", "Asynchronous Server Gateway Interface -- the async-capable successor to WSGI; what Uvicorn implements and FastAPI is built on."],
     ["Path operation", "A function decorated with @app.get/@app.post/etc. -- FastAPI's term for one route handler."],
     ["Depends()", "Declares a parameter as resolved by calling another function first -- FastAPI's dependency-injection mechanism."],
