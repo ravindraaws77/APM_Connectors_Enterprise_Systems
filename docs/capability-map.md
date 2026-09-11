@@ -24,6 +24,7 @@ tool-specific code beyond routing:
 - `capabilities`: which of `read`, `write`, `action` this tool supports
 - `dry_run`: when true, a write/action call returns what *would* happen
   without doing it — used for local testing without live credentials
-- every call is written to the audit log in
-  `src/apm_connectors/state/store.py`, whether it was a read, a proposed
+- every call is written to the audit log (`src/apm_connectors/state/
+  store.py`'s `StateStoreProtocol` -- file-backed by default,
+  Postgres-backed via `DATABASE_URL`), whether it was a read, a proposed
   write, an approval, a rejection, or an executed action

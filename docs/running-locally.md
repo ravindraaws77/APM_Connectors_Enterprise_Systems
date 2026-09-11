@@ -94,6 +94,17 @@ createdb apm_test
 APM_TEST_DATABASE_URL=postgresql://localhost/apm_test pytest tests/test_postgres_state_store.py tests/test_postgres_checkpointer.py -q
 ```
 
+`DATABASE_URL` works just as well pointed at a free managed Postgres
+(Neon, Supabase, etc.) for quick testing with no local Postgres install
+at all — live-verified end to end against Neon, including surviving a
+full container/task restart. One thing to know if you do: a serverless
+provider like Neon auto-suspends its compute after a few idle minutes,
+which used to surface as `SSL connection has been closed unexpectedly`
+on the first call after a while — both connection pools now pass
+`check=ConnectionPool.check_connection`, so a connection killed while
+idle in the pool is detected and transparently replaced rather than
+handed out broken (`state/postgres_store.py`, `api/dependencies.py`).
+
 ## What this service is (and isn't)
 
 This is the connector/enterprise-systems layer only — see
@@ -106,4 +117,4 @@ that never bends regardless of who's calling: every write pauses for
 human approval before anything executes.
 
 See `docs/deployment.md` to run this same API as a container, either
-locally with Docker or deployed to AWS App Runner.
+locally with Docker or deployed to AWS ECS on Fargate.

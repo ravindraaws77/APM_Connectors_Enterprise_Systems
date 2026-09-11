@@ -212,6 +212,22 @@ blast radius small; a security group allowing inbound Postgres
 (5432/tcp) from `aws_security_group.service` is the only piece that
 needs to reference this module's resources.
 
+For quick testing with no AWS resource to stand up at all, a free
+managed Postgres (e.g. [Neon](https://neon.tech)) works too — its
+connection string already includes `sslmode=require`, and the task's
+security group needs no changes since it's reached over the public
+internet, not the VPC (`assign_public_ip = true` already gives the
+task outbound internet access). This is live-verified: propose a
+write → `aws ecs update-service --force-new-deployment` → the pending
+action and audit trail are still there on the brand-new task → approve
+it → it executes for real. One thing to know with a serverless
+provider like Neon: it auto-suspends its compute after a few idle
+minutes, which surfaces as `SSL connection has been closed
+unexpectedly` on the first call after a while unless the pool detects
+and replaces the dead connection — both pools here do
+(`check=ConnectionPool.check_connection` in `state/postgres_store.py`
+and `api/dependencies.py`), so this recovers on its own.
+
 ## Known limitations (MVP tradeoff, same as running locally)
 
 - **State is ephemeral unless `database_url` is set.** See "Enabling

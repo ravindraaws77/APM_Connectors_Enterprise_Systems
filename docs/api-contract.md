@@ -231,7 +231,10 @@ POST /tools/actions/order-4521/decision
 the same for any id — whichever `process_id`/`action_id` string ended
 up being used, caller-supplied or generated — since the audit trail and
 pending-action store are shared infrastructure
-(`src/apm_connectors/state/store.py`).
+(`src/apm_connectors/state/store.py`'s `StateStoreProtocol` —
+file-backed by default, Postgres-backed via `DATABASE_URL` for a
+deployment that needs it to survive a redeploy; see
+`docs/deployment.md`).
 
 ## Stability
 
