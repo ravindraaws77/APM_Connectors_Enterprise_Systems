@@ -34,6 +34,9 @@ See `docs/running-locally.md` for the full walkthrough.
 
 ## Docs
 
+- `docs/architecture.md` — system-level view: components, the
+  propose/approve/execute flow, persistence, and deployment topology.
+  Start here if you're new to the repo.
 - `docs/api-contract.md` — the `/tools/*` HTTP contract: every route,
   request/response shape, and the approval-gate flow.
 - `docs/capability-map.md` — per-tool auth, capabilities, and known gaps.
