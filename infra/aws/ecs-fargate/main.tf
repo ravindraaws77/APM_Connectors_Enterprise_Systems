@@ -149,8 +149,9 @@ resource "aws_security_group" "service" {
 
   egress {
     # Outbound needed for: pulling the image from ECR, pushing logs to
-    # CloudWatch, reading secrets from SSM, and the app itself calling
-    # Gmail/Calendar/Graph/Salesforce APIs.
+    # CloudWatch, reading secrets from SSM, the app itself calling
+    # Gmail/Calendar/Salesforce/Jira APIs, and -- when database_url is
+    # set -- reaching the Postgres instance itself.
     from_port   = 0
     to_port     = 0
     protocol    = "-1"
@@ -274,6 +275,18 @@ resource "aws_ssm_parameter" "google_token_json" {
   value = var.google_token_json
 }
 
+# Only created when set, same reasoning as google_token_json above: an
+# "unset" placeholder here would be a real (if broken) DATABASE_URL the
+# app would try to connect to, not an empty value it already treats as
+# "no Postgres configured, use the file-backed store" (apm_connectors.
+# config.load_settings/api.dependencies).
+resource "aws_ssm_parameter" "database_url" {
+  count = var.database_url != "" ? 1 : 0
+  name  = "/${var.app_name}/DATABASE_URL"
+  type  = "SecureString"
+  value = var.database_url
+}
+
 locals {
   ssm_secret_arns = concat(
     [
@@ -281,7 +294,8 @@ locals {
       aws_ssm_parameter.salesforce_client_secret.arn,
       aws_ssm_parameter.jira_api_token.arn,
     ],
-    var.google_token_json != "" ? [aws_ssm_parameter.google_token_json[0].arn] : []
+    var.google_token_json != "" ? [aws_ssm_parameter.google_token_json[0].arn] : [],
+    var.database_url != "" ? [aws_ssm_parameter.database_url[0].arn] : []
   )
 
   container_secrets = concat(
@@ -290,7 +304,8 @@ locals {
       { name = "SALESFORCE_CLIENT_SECRET", valueFrom = aws_ssm_parameter.salesforce_client_secret.arn },
       { name = "JIRA_API_TOKEN", valueFrom = aws_ssm_parameter.jira_api_token.arn },
     ],
-    var.google_token_json != "" ? [{ name = "GOOGLE_TOKEN_JSON", valueFrom = aws_ssm_parameter.google_token_json[0].arn }] : []
+    var.google_token_json != "" ? [{ name = "GOOGLE_TOKEN_JSON", valueFrom = aws_ssm_parameter.google_token_json[0].arn }] : [],
+    var.database_url != "" ? [{ name = "DATABASE_URL", valueFrom = aws_ssm_parameter.database_url[0].arn }] : []
   )
 }
 
@@ -385,6 +400,7 @@ resource "null_resource" "force_new_deployment" {
       var.google_token_json,
       var.salesforce_client_secret,
       var.jira_api_token,
+      var.database_url,
     ]))
   }
 

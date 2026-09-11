@@ -15,3 +15,4 @@ app_name   = "apm-connectors"
 # jira_base_url  = ""  # e.g. "https://yourcompany.atlassian.net"
 # jira_email     = ""
 # jira_api_token = ""
+# database_url   = ""  # e.g. "postgresql://user:pass@host:5432/apm" -- leave unset for the default file-backed/in-memory state
