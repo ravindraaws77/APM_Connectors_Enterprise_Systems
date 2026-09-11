@@ -43,16 +43,18 @@ reasoning/orchestration layer calling this API, not in this repo.
 
 ## Reference documents
 
-When asked for an architecture doc (or a similarly detailed reference
-doc for one layer, e.g. deployment/Terraform), the preferred format is
-`docs/architecture.pdf`'s: a one-page diagram of every component, a
-page of readable component/connector/persistence reference tables,
-then a concise multi-page deep dive with real code snippets, one
-section per layer. Rebuild it from the current source (`git pull`
-first) rather than editing stale prose — and check every generated
-diagram/table page by rendering it to an image before sending, since
-layout bugs (clipped text, overflow) are easy to introduce and easy to
-catch that way.
+When asked for an architecture doc, or a similarly detailed reference
+doc for one layer (e.g. deployment/Terraform, MCP server), use the
+tooling in `scripts/docs/` — read `scripts/docs/README.md` first. It
+has the shared ReportLab template (`_pdf_template.py`), a worked
+example (`gen_mcp_server_pdf.py` → `docs/mcp-server-reference.pdf`),
+and the two document shapes in use (text-only deep dive vs. diagram +
+reference + deep dive, the latter used for `docs/architecture.pdf`).
+Rebuild from the current source (`git pull` first) rather than editing
+stale prose, and render every generated page to an image and look at
+it before calling a doc done — layout bugs (clipped text, overflow)
+are easy to introduce and easy to catch that way; scripts/docs/README.md
+has the exact snippet.
 
 ## Layout
 
