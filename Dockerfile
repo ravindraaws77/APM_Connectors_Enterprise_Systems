@@ -12,7 +12,13 @@ WORKDIR /app
 COPY pyproject.toml ./
 COPY src ./src
 
-RUN pip install --no-cache-dir ".[connectors]"
+# [postgres] is included unconditionally, not just when DATABASE_URL is
+# set at runtime -- psycopg[binary] needs no extra build tooling in the
+# image (precompiled wheel), and api/dependencies.py only imports it at
+# all once DATABASE_URL is actually set, so there's no cost to always
+# having it available and no reason to make the image build conditional
+# on how a given deployment will be configured.
+RUN pip install --no-cache-dir ".[connectors,postgres]"
 
 ENV APM_STATE_DIR=/app/state
 RUN mkdir -p /app/state
