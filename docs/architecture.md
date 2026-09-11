@@ -6,6 +6,12 @@ references (HTTP contract, per-tool setup, deployment runbook); this
 one is the map that ties them together. Start here if you're new to
 the repo.
 
+`docs/architecture.pdf` is a single-page, at-a-glance version of the
+same system as one dense flowchart (every component, the propose/
+approve/execute loop, and the pluggable persistence layer in one
+picture) — handy to skim or print; this doc is the detailed version
+with room to explain each piece.
+
 ## What this is, in one paragraph
 
 This is the connector/enterprise-systems layer of APM (Agentic Process
