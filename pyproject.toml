@@ -28,6 +28,12 @@ connectors = ["pytest>=8.0", "httpx>=0.27"]
 # Talks to that API purely over HTTP (never imports apm_connectors.tools
 # /graph directly) -- see src/apm_connectors_mcp/server.py's docstring.
 mcp = ["mcp>=2.0", "httpx>=0.27"]
+# Durable state: swaps the default file-backed StateStore and in-memory
+# LangGraph checkpointer for Postgres-backed ones when DATABASE_URL is
+# set (src/apm_connectors/state/postgres_store.py,
+# src/apm_connectors/api/dependencies.py). Optional and imported lazily
+# so the zero-infra local/file-backed default needs none of this.
+postgres = ["psycopg[binary,pool]>=3.2", "langgraph-checkpoint-postgres>=2.0"]
 
 [project.scripts]
 apm-connectors-mcp = "apm_connectors_mcp.server:main"

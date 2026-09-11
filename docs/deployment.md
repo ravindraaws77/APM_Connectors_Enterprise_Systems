@@ -181,14 +181,21 @@ task, since they're not sensitive on their own.
 
 ## Known limitations (MVP tradeoff, same as running locally)
 
-- **State is ephemeral.** `src/apm_connectors/state/store.py` is a
-  JSON file on the container's local disk (`APM_STATE_DIR`, default
-  `/app/state` in the image). A Fargate task has no persistent
-  storage — a redeploy or a task replacement loses the audit log and
-  any paused (proposed-but-not-yet-decided) actions. Acceptable for
-  this MVP; swapping the store for something durable (e.g. a small
-  managed Postgres) is a later, non-MVP phase, same as noted in
-  `src/apm_connectors/state/store.py`'s own module docstring.
+- **State is ephemeral by default.** `src/apm_connectors/state/store.py`
+  is a JSON file on the container's local disk (`APM_STATE_DIR`,
+  default `/app/state` in the image), and the default LangGraph
+  checkpointer holds paused actions in memory. A Fargate task has no
+  persistent local storage — a redeploy or a task replacement loses
+  the audit log and any paused (proposed-but-not-yet-decided) actions.
+  Set `DATABASE_URL` to a Postgres connection string (a small managed
+  instance, e.g. RDS) to swap in `PostgresStateStore` and a
+  Postgres-backed checkpointer instead — see `docs/running-locally.md`'s
+  "Durable state (optional: Postgres)" section and
+  `src/apm_connectors/state/postgres_store.py`. Not wired into
+  `infra/aws/ecs-fargate/`'s Terraform yet — set `DATABASE_URL` in
+  `terraform.tfvars` as a plain environment variable (or an SSM
+  `SecureString`, matching the other secrets, if it embeds a real
+  password) and add it to the task definition the same way.
 - **HTTP, not HTTPS.** The ALB listens on plain HTTP:80 for
   simplicity — there's no domain name or ACM certificate wired up here.
   Add an HTTPS listener (ACM cert + a domain in Route 53 or elsewhere)

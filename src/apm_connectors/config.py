@@ -48,6 +48,13 @@ class Settings:
     jira_base_url: str | None = None
     jira_email: str | None = None
     jira_api_token: str | None = None
+    # Durable state, opt-in: when set, apm_connectors.api.dependencies
+    # swaps the default file-backed StateStore + in-memory LangGraph
+    # checkpointer for Postgres-backed ones (state/postgres_store.py) --
+    # see docs/deployment.md's "State is ephemeral" known limitation.
+    # A standard "postgresql://user:pass@host:port/dbname" URL. Requires
+    # the optional `postgres` extra (`pip install -e ".[postgres]"`).
+    database_url: str | None = None
 
 
 def load_settings() -> Settings:
@@ -65,4 +72,5 @@ def load_settings() -> Settings:
         jira_base_url=os.environ.get("JIRA_BASE_URL"),
         jira_email=os.environ.get("JIRA_EMAIL"),
         jira_api_token=os.environ.get("JIRA_API_TOKEN"),
+        database_url=os.environ.get("DATABASE_URL"),
     )

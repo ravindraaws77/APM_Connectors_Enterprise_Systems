@@ -63,6 +63,37 @@ needs. Every route works with fake clients (tests) with no `.env` at
 all; real credentials are only needed to actually call Gmail/Calendar/
 Excel.
 
+## Durable state (optional: Postgres)
+
+By default, status/audit state lives in a local JSON file and paused
+(proposed-but-not-yet-approved) actions live in memory — zero extra
+infra, but both are lost on restart. Set `DATABASE_URL` (see
+`.env.example`) to swap in `PostgresStateStore` and a Postgres-backed
+LangGraph checkpointer instead (`src/apm_connectors/state/postgres_store.py`,
+`src/apm_connectors/api/dependencies.py`), so that state survives a
+restart or redeploy — see `docs/deployment.md`'s "State is ephemeral"
+note for why this matters for a real deployment. Needs the optional
+`postgres` extra:
+
+```
+pip install -e ".[connectors,postgres]"
+```
+
+Tables (`apm_processes`, `apm_events`, `apm_pending_actions`, plus the
+checkpointer's own `checkpoint*` tables) are created automatically on
+first use — no separate migration step.
+
+`tests/test_postgres_state_store.py` and
+`tests/test_postgres_checkpointer.py` exercise this against a real
+Postgres; they're skipped automatically unless both the `postgres`
+extra is installed and `APM_TEST_DATABASE_URL` points at a real,
+reachable (and disposable — tests truncate its tables) database:
+
+```
+createdb apm_test
+APM_TEST_DATABASE_URL=postgresql://localhost/apm_test pytest tests/test_postgres_state_store.py tests/test_postgres_checkpointer.py -q
+```
+
 ## What this service is (and isn't)
 
 This is the connector/enterprise-systems layer only — see
