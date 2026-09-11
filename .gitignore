@@ -34,3 +34,6 @@ state/*.json
 !**/terraform.tfvars.example
 crash.log
 crash.*.log
+
+# scripts/docs/ intermediate build output (per-page PDFs before merging)
+scripts/docs/_build/
