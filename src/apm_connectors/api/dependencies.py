@@ -45,6 +45,14 @@ def _get_postgres_pool() -> Any:
     return ConnectionPool(
         settings.database_url,
         kwargs={"autocommit": True, "prepare_threshold": None, "row_factory": dict_row},
+        # check=check_connection: verify a connection is actually alive
+        # before handing it out, replacing it transparently if not --
+        # see the identical comment in state/postgres_store.py, which
+        # this pool is shared with. Without this, a serverless Postgres
+        # (Neon, etc.) suspending its compute while a pooled connection
+        # sits idle breaks every call using it, indefinitely, with "SSL
+        # connection has been closed unexpectedly" -- live-verified.
+        check=ConnectionPool.check_connection,
         open=True,
     )
 
