@@ -37,3 +37,6 @@ crash.*.log
 
 # Test workbook created by scripts/start_test_server.py
 state/test/
+
+# scripts/docs/ intermediate build output (per-page PDFs before merging)
+scripts/docs/_build/
