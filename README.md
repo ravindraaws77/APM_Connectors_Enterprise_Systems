@@ -2,9 +2,9 @@
 
 The connector/enterprise-systems layer of the APM (Agentic Process
 Management) project, extracted into its own standalone, shippable
-service — Gmail, Google Calendar, and Excel connectors behind a plain
-read/write HTTP API, plus a small LangGraph process that gates every
-write behind explicit human approval.
+service — Gmail, Google Calendar, Excel, Salesforce, and Jira
+connectors behind a plain read/write HTTP API, plus a small LangGraph
+process that gates every write behind explicit human approval.
 
 > This package has **no reasoning of its own**. It's built to be
 > plugged into any reasoning/orchestration layer — deployed separately
@@ -51,12 +51,19 @@ See `docs/running-locally.md` for the full walkthrough.
   connectors at a different Google account, locally or on the AWS
   deployment.
 
+Durable state (swapping the default file-backed/in-memory status,
+audit log, and paused-approval storage for Postgres) is covered inline
+in `docs/running-locally.md` ("Durable state") and `docs/deployment.md`
+("Enabling durable state") rather than its own doc — see
+`src/apm_connectors/state/postgres_store.py` for the implementation.
+
 ## Layout
 
 ```
 src/apm_connectors/
   config.py      env/config loading
-  state/         persistent status + audit log store
+  state/         status + audit log store -- file-backed by default,
+                 Postgres-backed via DATABASE_URL (postgres_store.py)
   tools/         one module per external tool, common interface in base.py
   graph.py       the small propose -> approval -> execute LangGraph layer
   api/           FastAPI app exposing tools/graph over HTTP (/tools/*)

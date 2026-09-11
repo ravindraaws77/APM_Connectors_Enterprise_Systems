@@ -29,7 +29,11 @@ reasoning/orchestration layer calling this API, not in this repo.
   `src/apm_connectors/tools/base.py` and is registered in
   `docs/capability-map.md`.
 - Every action (read, proposed write, approval, rejection, execution,
-  failure) is recorded via `src/apm_connectors/state/store.py`.
+  failure) is recorded via the state store (`src/apm_connectors/state/
+  store.py`'s `StateStoreProtocol`) — file-backed by default,
+  Postgres-backed (`state/postgres_store.py`) when `DATABASE_URL` is
+  set. Callers only ever depend on the method surface, never on which
+  one is behind it.
 - Prefer dry-run-testable code: a connector should be exercisable with
   `dry_run=True` and no live credentials, so its logic can be reviewed and
   tested before anyone wires up real accounts.
@@ -44,7 +48,8 @@ docs/            api contract, capability map, security guardrails, running loca
 .claude/skills/  tool-integration: checklist for adding a connector
 src/apm_connectors/
   config.py      env/config loading
-  state/         persistent status + audit log store
+  state/         status + audit log store -- file-backed by default,
+                 Postgres-backed via DATABASE_URL (postgres_store.py)
   tools/         one module per external tool, common interface in base.py
   graph.py       small propose -> approval -> execute LangGraph layer
   api/           FastAPI app + /tools/* routes
