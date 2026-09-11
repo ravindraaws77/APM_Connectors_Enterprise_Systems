@@ -6,11 +6,15 @@ references (HTTP contract, per-tool setup, deployment runbook); this
 one is the map that ties them together. Start here if you're new to
 the repo.
 
-`docs/architecture.pdf` is a single-page, at-a-glance version of the
-same system as one dense flowchart (every component, the propose/
+`docs/architecture.pdf` is a 7-page reference built from this same
+system: page 1 is a one-page flowchart (every component, the propose/
 approve/execute loop, and the pluggable persistence layer in one
-picture) — handy to skim or print; this doc is the detailed version
-with room to explain each piece.
+picture), page 2 is readable component/connector/persistence reference
+tables, and pages 3-7 are a concise deep dive (request flow, the
+connector interface, the approval gate, the Postgres-backed
+persistence swap, the MCP front door, deployment) — handy to skim,
+print, or hand to someone new to the repo. This doc is the
+GitHub-native version of the same material, kept in sync with it.
 
 ## What this is, in one paragraph
 

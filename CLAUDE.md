@@ -41,10 +41,23 @@ reasoning/orchestration layer calling this API, not in this repo.
   existing `/tools/*` route's request/response shape is a breaking
   change for whatever's already built against `docs/api-contract.md`.
 
+## Reference documents
+
+When asked for an architecture doc (or a similarly detailed reference
+doc for one layer, e.g. deployment/Terraform), the preferred format is
+`docs/architecture.pdf`'s: a one-page diagram of every component, a
+page of readable component/connector/persistence reference tables,
+then a concise multi-page deep dive with real code snippets, one
+section per layer. Rebuild it from the current source (`git pull`
+first) rather than editing stale prose — and check every generated
+diagram/table page by rendering it to an image before sending, since
+layout bugs (clipped text, overflow) are easy to introduce and easy to
+catch that way.
+
 ## Layout
 
 ```
-docs/            api contract, capability map, security guardrails, running locally, deployment
+docs/            architecture, api contract, capability map, security guardrails, running locally, deployment
 .claude/skills/  tool-integration: checklist for adding a connector
 src/apm_connectors/
   config.py      env/config loading
