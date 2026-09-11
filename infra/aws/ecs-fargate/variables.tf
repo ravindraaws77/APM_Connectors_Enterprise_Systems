@@ -116,3 +116,10 @@ variable "jira_api_token" {
   default     = ""
   sensitive   = true
 }
+
+variable "database_url" {
+  description = "Postgres connection string (\"postgresql://user:pass@host:port/dbname\") for durable state -- swaps the default file-backed StateStore + in-memory LangGraph checkpointer for Postgres-backed ones (see src/apm_connectors/state/postgres_store.py) so status/audit state and paused approvals survive a redeploy or task replacement. Optional: leave empty to keep the default ephemeral, zero-infra behavior. Stored as an SSM SecureString, never a plain env var, and only created/attached at all when set (like google_token_json above) -- unlike the other secrets, an \"unset\" placeholder value would be a real, if broken, connection string, not an empty credential the app already knows how to treat as unconfigured."
+  type        = string
+  default     = ""
+  sensitive   = true
+}

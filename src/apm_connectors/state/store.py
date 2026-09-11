@@ -4,10 +4,15 @@ MVP: everything the agent does gets written here so status survives a
 restart and is available to the UI (phase 6) and to whoever needs to
 answer "what happened and why".
 
-Swap-out note: this is intentionally simple (a JSON file + a lock) so the
-MVP has zero extra infra to run. `docs/roadmap.md` calls out swapping this
-for Postgres as a later, non-MVP phase — callers should only use the
-methods below (not the file format) so that swap doesn't ripple outward.
+Swap-out note: this is intentionally simple (a JSON file + a lock) so a
+zero-infra local dev setup needs no extra services. For a deployment that
+needs status/audit state to survive a redeploy or be shared across more
+than one API process, `apm_connectors.state.postgres_store.PostgresStateStore`
+implements this exact same method surface against Postgres instead --
+`apm_connectors.api.dependencies.get_state_store` picks between the two
+based on whether `DATABASE_URL` is set. Callers should only ever depend
+on the methods below (not the file format, not which class this is), so
+that swap never ripples outward -- see `StateStoreProtocol`.
 """
 
 from __future__ import annotations
@@ -18,7 +23,7 @@ import uuid
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, Protocol, runtime_checkable
 
 EventType = Literal[
     "read",
@@ -195,3 +200,44 @@ class StateStore:
             {"category": action.get("category", "other"), **action["payload"]},
         )
         return action
+
+
+@runtime_checkable
+class StateStoreProtocol(Protocol):
+    """The method surface both StateStore and PostgresStateStore
+    implement -- used purely for typing (e.g. api/dependencies.py's
+    return types), so a caller's type hints don't have to name one
+    concrete implementation over the other.
+    """
+
+    def get_status(self, process_id: str) -> dict[str, Any] | None: ...
+
+    def set_status(self, process_id: str, **fields: Any) -> dict[str, Any]: ...
+
+    def list_processes(self) -> list[dict[str, Any]]: ...
+
+    def log_event(
+        self,
+        process_id: str,
+        tool: str,
+        event_type: EventType,
+        summary: str,
+        details: dict[str, Any] | None = None,
+    ) -> Any: ...
+
+    def list_events(
+        self, process_id: str | None = None, limit: int | None = None
+    ) -> list[dict[str, Any]]: ...
+
+    def add_pending_action(
+        self,
+        process_id: str,
+        tool: str,
+        description: str,
+        payload: dict[str, Any],
+        category: str = "other",
+    ) -> dict[str, Any]: ...
+
+    def list_pending_actions(self, process_id: str | None = None) -> list[dict[str, Any]]: ...
+
+    def resolve_pending_action(self, action_id: str, approved: bool) -> dict[str, Any] | None: ...

@@ -179,16 +179,45 @@ then `terraform apply`. `jira_api_token` is stored as an SSM
 `jira_base_url`/`jira_email` are plain environment variables on the
 task, since they're not sensitive on their own.
 
+## Enabling durable state (Postgres) on this deployment
+
+By default the connector API's status/audit store is a JSON file on
+the container's local disk, and paused (proposed-but-not-yet-decided)
+actions live in the LangGraph checkpointer's memory — both lost on a
+redeploy or task replacement, since a Fargate task has no persistent
+local storage (see "Known limitations" below). Point the deployment at
+a real Postgres instance (RDS, or any reachable Postgres) to fix that:
+
+```
+database_url = "postgresql://user:password@host:5432/apm"
+```
+
+then `terraform apply`. `database_url` is stored as an SSM
+`SecureString`, the same as the other secrets, and — unlike them —
+only created and attached to the task at all when set: leaving it
+unset keeps today's default file-backed/in-memory behavior exactly as
+before, no empty/placeholder connection string involved. The app
+creates its tables on first use (`src/apm_connectors/state/postgres_store.py`,
+plus the LangGraph checkpointer's own `checkpoint*` tables) — no
+separate migration step or `terraform apply` needed to set up schema
+once the database itself exists and is reachable from the task's
+security group (`aws_security_group.service` — an RDS instance in the
+same VPC needs to allow inbound from it).
+
+This Terraform module doesn't provision the Postgres instance itself
+(RDS, Aurora Serverless, or otherwise) — only wires up `database_url`
+once you have one. Standing up RDS in the default VPC this module
+uses is straightforward but out of scope here to keep the module's own
+blast radius small; a security group allowing inbound Postgres
+(5432/tcp) from `aws_security_group.service` is the only piece that
+needs to reference this module's resources.
+
 ## Known limitations (MVP tradeoff, same as running locally)
 
-- **State is ephemeral.** `src/apm_connectors/state/store.py` is a
-  JSON file on the container's local disk (`APM_STATE_DIR`, default
-  `/app/state` in the image). A Fargate task has no persistent
-  storage — a redeploy or a task replacement loses the audit log and
-  any paused (proposed-but-not-yet-decided) actions. Acceptable for
-  this MVP; swapping the store for something durable (e.g. a small
-  managed Postgres) is a later, non-MVP phase, same as noted in
-  `src/apm_connectors/state/store.py`'s own module docstring.
+- **State is ephemeral unless `database_url` is set.** See "Enabling
+  durable state (Postgres) on this deployment" above — with no
+  `database_url`, a redeploy or task replacement loses the audit log
+  and any paused (proposed-but-not-yet-decided) actions.
 - **HTTP, not HTTPS.** The ALB listens on plain HTTP:80 for
   simplicity — there's no domain name or ACM certificate wired up here.
   Add an HTTPS listener (ACM cert + a domain in Route 53 or elsewhere)
