@@ -15,6 +15,19 @@ resources are created by you running `terraform apply` from a shell
 where your own AWS credentials live — nothing here holds or needs
 your AWS credentials itself.
 
+**Contents:** [What gets created](#what-gets-created) ·
+[Prerequisites](#prerequisites) · [Deploy](#deploy) ·
+[Updating a running deployment](#updating-a-running-deployment) ·
+[Changing connector configuration](#changing-connector-configuration) ·
+[Enabling real Gmail/Calendar](#enabling-real-gmailcalendar-on-this-deployment) ·
+[Enabling real Salesforce](#enabling-real-salesforce-on-this-deployment) ·
+[Enabling real Jira](#enabling-real-jira-on-this-deployment) ·
+[Enabling durable state (Postgres)](#enabling-durable-state-postgres-on-this-deployment) ·
+[Known limitations](#known-limitations-mvp-tradeoff-same-as-running-locally) ·
+[Troubleshooting](#troubleshooting) ·
+[Local Docker (no AWS)](#local-docker-no-aws) ·
+[Integration tests](#integration-tests)
+
 ## What gets created
 
 - An ECR repository, and the Docker image (repo-root `Dockerfile`)
@@ -244,6 +257,48 @@ and `api/dependencies.py`), so this recovers on its own.
   compute time, ECR storage, and CloudWatch Logs. Run
   `terraform destroy` from `infra/aws/ecs-fargate/` to tear everything
   down when you're done with it.
+
+## Troubleshooting
+
+Two issues worth knowing the shape of, both live-verified while
+building and testing this deployment for real:
+
+**`terraform apply` fails with `failed to connect to the docker API at
+npipe:////./pipe/dockerDesktopLinuxEngine` (or a similar `unix:///var/run/docker.sock` message on macOS/Linux).**
+The build/push step (`null_resource.docker_build_push`) needs a
+running Docker daemon on the machine running `terraform apply` — this
+error means it couldn't reach one, not a problem with the Terraform
+itself. Fix:
+1. Open Docker Desktop and wait for it to report **"Engine running"**
+   (bottom-left of its window) before re-running `terraform apply`.
+2. On Windows specifically: right-click the Docker Desktop tray icon.
+   If it offers **"Switch to Windows containers..."**, you're already
+   on Linux containers (good) — the label names the mode you'd switch
+   *to*, not the one you're in. If it instead offers **"Switch to
+   Linux containers..."**, click it — the build needs Linux containers.
+3. Confirm from your shell before retrying:
+   ```
+   docker info
+   ```
+   This must print both a `Client:` and a `Server:` section with no
+   errors. Once it does, `terraform apply` again — it resumes from
+   wherever it left off (any AWS resources already created, like the
+   ALB, aren't recreated).
+
+**A `/tools/*` write call fails with `SSL connection has been closed
+unexpectedly` (or a similar "server closed the connection" message)
+some time after this deployment has been idle, when `database_url` points
+at a serverless Postgres provider (e.g. [Neon](https://neon.tech)).**
+Providers like this auto-suspend their compute after a few idle
+minutes, which can kill a connection sitting in this app's connection
+pool. This is handled automatically — both connection pools that talk
+to `database_url` detect a dead connection on checkout and transparently
+replace it (`check=ConnectionPool.check_connection` in
+`state/postgres_store.py` and `api/dependencies.py`) — so a second
+attempt of the same call should just work. If it doesn't recover after
+one retry, that's a different, real failure (check the provider's
+dashboard for its own status/outage first, then the task's CloudWatch
+logs).
 
 ## Local Docker (no AWS)
 
