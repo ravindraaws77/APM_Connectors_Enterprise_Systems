@@ -155,6 +155,44 @@ class JiraTool(BaseTool):
         return JiraIssue(issue_key=raw.get("key", ""), issue_type=issue_type, fields=raw_fields)
 
 
+def _text_to_adf(text: str) -> dict[str, Any]:
+    """Converts a plain string into the Atlassian Document Format (ADF)
+    Jira Cloud's REST API v3 requires for `description` -- a plain
+    string 400s outright (live-verified against a real site: "Bad
+    Request for url: .../rest/api/3/issue" with no further detail in
+    the error message reaching the caller). Not a full Markdown-to-ADF
+    converter -- just enough structure (paragraphs on blank lines, hard
+    breaks on single newlines) to preserve what a caller wrote instead
+    of losing it to a single run-on line or a hard failure.
+    """
+    content: list[dict[str, Any]] = []
+    for paragraph in text.split("\n\n"):
+        paragraph_content: list[dict[str, Any]] = []
+        for i, line in enumerate(paragraph.split("\n")):
+            if i > 0:
+                paragraph_content.append({"type": "hardBreak"})
+            if line:
+                paragraph_content.append({"type": "text", "text": line})
+        if paragraph_content:
+            content.append({"type": "paragraph", "content": paragraph_content})
+    return {"type": "doc", "version": 1, "content": content or [{"type": "paragraph", "content": []}]}
+
+
+def _normalize_fields_for_jira_api(fields: dict[str, Any]) -> dict[str, Any]:
+    """The one place every create/update call passes through before
+    reaching Jira's real API -- callers (an LLM agent, a deterministic
+    graph node) shouldn't need to know Jira Cloud's ADF requirement for
+    `description` (see `_text_to_adf`); normalize it here instead of at
+    every call site. A `fields` dict with no `description`, or one
+    that's already a dict (already ADF, e.g. a caller composing it
+    directly), passes through unchanged.
+    """
+    description = fields.get("description")
+    if not isinstance(description, str):
+        return fields
+    return {**fields, "description": _text_to_adf(description)}
+
+
 class JiraRestClient:
     """Real Jira Cloud REST API client, authenticating with an
     Atlassian API token (Basic auth: account email + token) --
@@ -223,7 +261,7 @@ class JiraRestClient:
             f"{self._base}/issue",
             auth=self._auth,
             headers=self._headers(),
-            json={"fields": fields},
+            json={"fields": _normalize_fields_for_jira_api(fields)},
             timeout=30,
         )
         response.raise_for_status()
@@ -237,7 +275,7 @@ class JiraRestClient:
             f"{self._base}/issue/{quote(issue_key)}",
             auth=self._auth,
             headers=self._headers(),
-            json={"fields": fields},
+            json={"fields": _normalize_fields_for_jira_api(fields)},
             timeout=30,
         )
         response.raise_for_status()
