@@ -31,6 +31,10 @@ Sanity check it's up:
 python scripts/api_smoke_test.py
 ```
 
+No auth is needed for any of this by default — see
+`docs/api-contract.md`'s "Auth is opt-in" for when to set
+`APM_API_KEYS` (not something local dev needs).
+
 ## Run the MCP server (for an LLM-based agent)
 
 An alternative to a reasoning layer calling `/tools/*` directly over
@@ -48,7 +52,11 @@ APM_CONNECTORS_BASE_URL=http://127.0.0.1:8000 apm-connectors-mcp
 That starts a stdio-transport MCP server (the default for a local
 agent host's MCP config, e.g. pointing Claude Desktop/Code at the
 `apm-connectors-mcp` command). For a remote reasoning layer instead,
-set `APM_CONNECTORS_MCP_TRANSPORT=sse` or `streamable-http`.
+set `APM_CONNECTORS_MCP_TRANSPORT=sse` or `streamable-http`. If the
+`/tools/*` server it's pointed at has `APM_API_KEYS` configured, also
+set `APM_CONNECTORS_API_KEY` to one of those keys so its calls
+authenticate — unused, and safe to leave unset, against a server with
+no auth configured.
 
 `tests/test_mcp_server.py` covers it the same way `test_tools_api.py`
 covers the REST layer — fake tools, in-process, no live credentials or

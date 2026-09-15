@@ -19,9 +19,15 @@ from __future__ import annotations
 
 from fastapi import Depends, FastAPI, HTTPException
 
-from apm_connectors.api.dependencies import get_state_store
+from apm_connectors.api.dependencies import get_state_store, require_caller
 from apm_connectors.api.tools_routes import router as tools_router
 from apm_connectors.state.store import StateStore
+
+# Every /processes/* route below sits behind require_caller too (never
+# /health -- a load balancer's health check carries no credentials). See
+# tools_routes.py's module docstring and api/dependencies.py's
+# require_caller for what this does when APM_API_KEYS isn't configured.
+_authenticated = [Depends(require_caller)]
 
 
 def create_app() -> FastAPI:
@@ -32,22 +38,22 @@ def create_app() -> FastAPI:
     def health() -> dict[str, str]:
         return {"status": "ok"}
 
-    @app.get("/processes")
+    @app.get("/processes", dependencies=_authenticated)
     def list_processes(store: StateStore = Depends(get_state_store)) -> list[dict]:
         return store.list_processes()
 
-    @app.get("/processes/{process_id}/status")
+    @app.get("/processes/{process_id}/status", dependencies=_authenticated)
     def get_process_status(process_id: str, store: StateStore = Depends(get_state_store)) -> dict:
         status = store.get_status(process_id)
         if status is None:
             raise HTTPException(status_code=404, detail=f"unknown process_id: {process_id}")
         return status
 
-    @app.get("/processes/{process_id}/history")
+    @app.get("/processes/{process_id}/history", dependencies=_authenticated)
     def get_process_history(process_id: str, store: StateStore = Depends(get_state_store)) -> list[dict]:
         return store.list_events(process_id)
 
-    @app.get("/processes/{process_id}/pending")
+    @app.get("/processes/{process_id}/pending", dependencies=_authenticated)
     def get_pending_actions(process_id: str, store: StateStore = Depends(get_state_store)) -> list[dict]:
         return store.list_pending_actions(process_id)
 

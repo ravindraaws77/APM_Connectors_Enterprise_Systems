@@ -38,13 +38,26 @@ class ConnectorClient:
     client (and the tools built on it) against real route handlers
     with no live server process or network involved, same spirit as
     tests/test_tools_api.py's in-process TestClient.
+
+    `api_key` defaults to APM_CONNECTORS_API_KEY: only needed once the
+    /tools/* server this points at has APM_API_KEYS configured (see
+    apm_connectors.api.dependencies.require_caller) -- against a server
+    with no auth configured, an api_key here is simply never checked.
     """
 
-    def __init__(self, base_url: str | None = None, transport: httpx.AsyncBaseTransport | None = None) -> None:
+    def __init__(
+        self,
+        base_url: str | None = None,
+        transport: httpx.AsyncBaseTransport | None = None,
+        api_key: str | None = None,
+    ) -> None:
+        api_key = api_key or os.environ.get("APM_CONNECTORS_API_KEY")
+        headers = {"Authorization": f"Bearer {api_key}"} if api_key else None
         self._client = httpx.AsyncClient(
             base_url=base_url or os.environ.get("APM_CONNECTORS_BASE_URL", DEFAULT_BASE_URL),
             timeout=30.0,
             transport=transport,
+            headers=headers,
         )
 
     async def aclose(self) -> None:

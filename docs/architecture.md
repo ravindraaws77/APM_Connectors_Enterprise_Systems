@@ -41,6 +41,7 @@ flowchart LR
     gmail[(Gmail)]
     cal[(Google Calendar)]
     excel[(Excel: local file or<br/>Google Drive)]
+    drive[(Drive: documents,<br/>one configured folder)]
     sf[(Salesforce)]
     jira[(Jira)]
     state[("State store +<br/>LangGraph checkpointer")]
@@ -53,6 +54,7 @@ flowchart LR
     api --> gmail
     api --> cal
     api --> excel
+    api --> drive
     api --> sf
     api --> jira
     api <--> state

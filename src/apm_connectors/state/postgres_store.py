@@ -56,6 +56,18 @@ CREATE TABLE IF NOT EXISTS apm_pending_actions (
     resolved_at TIMESTAMPTZ
 );
 CREATE INDEX IF NOT EXISTS apm_pending_actions_status_idx ON apm_pending_actions (status, process_id);
+
+-- Added after the tables above already shipped -- ADD COLUMN IF NOT
+-- EXISTS keeps _setup() idempotent against both a brand-new database and
+-- one from before caller/proposed_by/decided_by existed, with no
+-- separate migration step (see docs/deployment.md's "no separate
+-- migration step" promise). All nullable: a caller is only ever known
+-- when APM_API_KEYS is configured (apm_connectors.api.dependencies.
+-- require_caller), and only for a propose/decide call, not yet for a
+-- plain read or an execute_node write (see store.py's log_event).
+ALTER TABLE apm_events ADD COLUMN IF NOT EXISTS caller TEXT;
+ALTER TABLE apm_pending_actions ADD COLUMN IF NOT EXISTS proposed_by TEXT;
+ALTER TABLE apm_pending_actions ADD COLUMN IF NOT EXISTS decided_by TEXT;
 """
 
 
@@ -161,6 +173,7 @@ class PostgresStateStore:
         event_type: EventType,
         summary: str,
         details: dict[str, Any] | None = None,
+        caller: str | None = None,
     ) -> dict[str, Any]:
         event = {
             "id": str(uuid.uuid4()),
@@ -170,12 +183,14 @@ class PostgresStateStore:
             "event_type": event_type,
             "summary": summary,
             "details": details or {},
+            "caller": caller,
         }
         with self._connection() as conn:
             conn.execute(
                 """
-                INSERT INTO apm_events (id, process_id, tool, event_type, summary, details, created_at)
-                VALUES (%(id)s, %(process_id)s, %(tool)s, %(event_type)s, %(summary)s, %(details)s, %(timestamp)s)
+                INSERT INTO apm_events (id, process_id, tool, event_type, summary, details, caller, created_at)
+                VALUES (%(id)s, %(process_id)s, %(tool)s, %(event_type)s, %(summary)s, %(details)s,
+                        %(caller)s, %(timestamp)s)
                 """,
                 {**event, "details": Jsonb(event["details"])},
             )
@@ -184,7 +199,7 @@ class PostgresStateStore:
     def list_events(
         self, process_id: str | None = None, limit: int | None = None
     ) -> list[dict[str, Any]]:
-        query = "SELECT id, process_id, tool, event_type, summary, details, created_at FROM apm_events"
+        query = "SELECT id, process_id, tool, event_type, summary, details, caller, created_at FROM apm_events"
         params: list[Any] = []
         if process_id is not None:
             query += " WHERE process_id = %s"
@@ -209,6 +224,7 @@ class PostgresStateStore:
         description: str,
         payload: dict[str, Any],
         category: str = "other",
+        proposed_by: str | None = None,
     ) -> dict[str, Any]:
         action = {
             "id": str(uuid.uuid4()),
@@ -217,6 +233,7 @@ class PostgresStateStore:
             "description": description,
             "payload": payload,
             "category": category,
+            "proposed_by": proposed_by,
             "status": "pending",
             "created_at": _now(),
         }
@@ -224,20 +241,22 @@ class PostgresStateStore:
             conn.execute(
                 """
                 INSERT INTO apm_pending_actions
-                    (id, process_id, tool, description, payload, category, status, created_at)
+                    (id, process_id, tool, description, payload, category, proposed_by, status, created_at)
                 VALUES
                     (%(id)s, %(process_id)s, %(tool)s, %(description)s, %(payload)s,
-                     %(category)s, %(status)s, %(created_at)s)
+                     %(category)s, %(proposed_by)s, %(status)s, %(created_at)s)
                 """,
                 {**action, "payload": Jsonb(action["payload"])},
             )
-        self.log_event(process_id, tool, "action_proposed", description, {"category": category, **payload})
+        self.log_event(
+            process_id, tool, "action_proposed", description, {"category": category, **payload}, caller=proposed_by
+        )
         return {**action, "created_at": _iso(action["created_at"])}
 
     def list_pending_actions(self, process_id: str | None = None) -> list[dict[str, Any]]:
         query = (
-            "SELECT id, process_id, tool, description, payload, category, status, created_at, resolved_at "
-            "FROM apm_pending_actions WHERE status = 'pending'"
+            "SELECT id, process_id, tool, description, payload, category, proposed_by, decided_by, "
+            "status, created_at, resolved_at FROM apm_pending_actions WHERE status = 'pending'"
         )
         params: list[Any] = []
         if process_id is not None:
@@ -248,18 +267,21 @@ class PostgresStateStore:
             rows = conn.execute(query, params or None).fetchall()
         return [_pending_action_row_to_dict(row) for row in rows]
 
-    def resolve_pending_action(self, action_id: str, approved: bool) -> dict[str, Any] | None:
+    def resolve_pending_action(
+        self, action_id: str, approved: bool, decided_by: str | None = None
+    ) -> dict[str, Any] | None:
         status = "approved" if approved else "rejected"
         now = _now()
         with self._connection() as conn:
             row = conn.execute(
                 """
                 UPDATE apm_pending_actions
-                SET status = %s, resolved_at = %s
+                SET status = %s, decided_by = %s, resolved_at = %s
                 WHERE id = %s AND status = 'pending'
-                RETURNING id, process_id, tool, description, payload, category, status, created_at, resolved_at
+                RETURNING id, process_id, tool, description, payload, category, proposed_by, decided_by,
+                          status, created_at, resolved_at
                 """,
-                (status, now, action_id),
+                (status, decided_by, now, action_id),
             ).fetchone()
         if row is None:
             return None
@@ -270,6 +292,7 @@ class PostgresStateStore:
             "action_approved" if approved else "action_rejected",
             action["description"],
             {"category": action.get("category", "other"), **action["payload"]},
+            caller=decided_by,
         )
         return action
 
@@ -292,6 +315,7 @@ def _event_row_to_dict(row: dict[str, Any]) -> dict[str, Any]:
         "event_type": row["event_type"],
         "summary": row["summary"],
         "details": row["details"],
+        "caller": row["caller"],
     }
 
 
@@ -303,6 +327,8 @@ def _pending_action_row_to_dict(row: dict[str, Any]) -> dict[str, Any]:
         "description": row["description"],
         "payload": row["payload"],
         "category": row["category"],
+        "proposed_by": row["proposed_by"],
+        "decided_by": row["decided_by"],
         "status": row["status"],
         "created_at": _iso(row["created_at"]),
     }

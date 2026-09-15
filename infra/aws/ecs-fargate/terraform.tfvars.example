@@ -16,3 +16,4 @@ app_name   = "apm-connectors"
 # jira_email     = ""
 # jira_api_token = ""
 # database_url   = ""  # e.g. "postgresql://user:pass@host:5432/apm" -- leave unset for the default file-backed/in-memory state
+# api_keys       = ""  # e.g. "orchestrator:sk_live_...,alice:sk_live_..." -- leave unset for the default no-auth behavior (see docs/api-contract.md)

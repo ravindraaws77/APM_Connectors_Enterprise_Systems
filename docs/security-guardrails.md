@@ -10,6 +10,15 @@ target state.
   the minimum scope needed (e.g. `gmail.readonly` before `gmail.send`).
 - Credentials are per-user (your own Google/Microsoft account), never a
   shared service account, for this MVP.
+- **Callers of this API are authenticated too, once configured.** Set
+  `APM_API_KEYS` (see `.env.example`) before a deployment is reachable
+  beyond a network boundary it already trusts — every `/tools/*` and
+  `/processes/*` route then requires a bearer token matching a
+  configured key (`/health` stays open, for load-balancer checks). This
+  is opt-in and off by default (see `docs/api-contract.md`): a fresh
+  local checkout has no auth, exactly as always. Each key names a
+  caller, not just a yes/no check — that name is what lands in the
+  audit trail as `proposed_by`/`decided_by` (see section 4).
 
 ## 2. Credential & secret management
 - Secrets live only in a local `.env` file (or your OS keychain/OAuth token
@@ -31,6 +40,14 @@ target state.
   see `docs/deployment.md`): who/what proposed it, what it was, the
   decision, and the outcome. Logs are append-only from the
   application's perspective.
+- With `APM_API_KEYS` configured (section 1), *who* is a verified
+  identity, not just a label: every proposed write records its
+  authenticated caller as `proposed_by`, and every decision records its
+  authenticated caller as `decided_by` — two independent fields, since
+  the human deciding a write is often not whatever proposed it. Both
+  are `null` with auth off, or for a plain read (not yet threaded
+  through every connector's own logging — a known gap, not a silent
+  one: see `src/apm_connectors/state/store.py`'s `log_event` docstring).
 
 ## 5. The core guardrail: human approval before any write/send/action
 

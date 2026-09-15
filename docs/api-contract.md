@@ -54,10 +54,22 @@ Wherever `uvicorn apm_connectors.api.app:app` is running, e.g.
     the server logs the full traceback.
   - `422` — the request body didn't match the schema (standard FastAPI
     validation).
-- **No auth today.** This API assumes a trusted internal caller — an
-  API key/bearer check before exposing this beyond a network boundary
-  it doesn't already trust is a known, separate piece of work, not yet
-  done.
+  - `401` — only once auth is enabled (see below): a missing or invalid
+    `Authorization` header.
+- **Auth is opt-in, off by default.** With no `APM_API_KEYS` set, every
+  route below (and `/processes/*`) behaves exactly as before — this API
+  assumes a trusted internal caller, no credentials needed. Set
+  `APM_API_KEYS` (see `.env.example`) before exposing a deployment
+  beyond a network boundary it doesn't already trust, and every request
+  then needs `Authorization: Bearer <key>` matching one of the
+  configured keys, or gets a 401 — `/health` is the one exception,
+  always reachable with no credentials (a load balancer's health check
+  carries none). Each key is tied to a caller name, which flows into
+  the audit trail: a write route records it as `proposed_by`, and
+  `POST /tools/actions/{action_id}/decision` records it as
+  `decided_by` — two independent identities, since the human deciding
+  a write is often not whatever proposed it. Both are `null` with auth
+  off. See `docs/security-guardrails.md`.
 
 ## Gmail
 
@@ -96,6 +108,28 @@ One workbook per running server (`APM_EXCEL_WORKBOOK_PATH` or
 is set, every Excel route 503s. `read`'s `sheet_name`/`address` default
 to the workbook's first worksheet and its whole used range when
 omitted — pass them explicitly for anything more specific.
+
+## Drive documents
+
+| Route | Kind | Request body | Returns |
+|---|---|---|---|
+| `POST /tools/drive/list` | read | `{process_id?, name_contains?, max_results?: 20}` | `[{file_id, name, mime_type, modified_time, web_view_link}, ...]` |
+| `POST /tools/drive/read` | read | `{process_id?, file_id}` | `{file_id, name, mime_type, size, content_base64}` |
+| `POST /tools/drive/upload` | **write** | `{process_id?, name, content_base64, mime_type}` | `RunOutcomeResponse` |
+| `POST /tools/drive/update` | **write** | `{process_id?, file_id, content_base64}` | `RunOutcomeResponse` |
+
+Distinct from Excel above: this is for arbitrary documents (contracts,
+POs, signed agreements), not `.xlsx` cell ranges. Every operation is
+scoped to one Drive folder (`APM_DRIVE_FOLDER_ID` — see
+`docs/capability-map.md`); if unset, every Drive route 503s. `read`
+502s immediately (naming the file) if `file_id` isn't actually inside
+that folder — this connector refuses to touch anything outside it,
+regardless of what the broader OAuth scope could otherwise reach. For
+`update`, the same check runs against the real file only once a human
+approves the write, not on the initial propose call — the dry-run
+proposal always succeeds (it just echoes `file_id` back); an
+out-of-folder `file_id` surfaces as a 502 on the
+`POST /tools/actions/{action_id}/decision` call instead.
 
 ## Salesforce
 
@@ -154,11 +188,17 @@ advance:
     "method": "send_email",
     "description": "Send email to customer@realcorp.io: 'Update'",
     "payload": {"to": "customer@realcorp.io", "subject": "Update", "body": "…"},
-    "category": "manual"
+    "category": "manual",
+    "proposed_by": null
   },
   "final_result": null
 }
 ```
+
+`proposed_by` is `null` here since this example has no auth configured
+(`APM_API_KEYS` unset) — with it set, this is the caller name behind
+whichever key authenticated the `/tools/gmail/send` call, so a human
+reviewing this pending action sees who's asking.
 
 Resolve it with:
 
@@ -166,6 +206,11 @@ Resolve it with:
 POST /tools/actions/{action_id}/decision
 {"approved": true}
 ```
+
+(Also `null` here for the same reason: with auth on, whoever's
+authenticated on *this* call is recorded as `decided_by` on the
+resolved action and its audit event — independently of `proposed_by`,
+since the approver is often a different identity than the proposer.)
 
 On approval, the response's `final_result` is set (`pending_action:
 null`):

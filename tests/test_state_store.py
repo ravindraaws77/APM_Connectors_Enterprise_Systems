@@ -89,6 +89,51 @@ def test_pending_action_category_defaults_to_other(tmp_path: Path) -> None:
     assert action["category"] == "other"
 
 
+def test_pending_action_proposed_by_and_decided_by_are_stored_and_logged(tmp_path: Path) -> None:
+    """proposed_by/decided_by are the authenticated caller (None when
+    auth is off, see api/dependencies.require_caller) that proposed and
+    decided an action -- carried onto the action record and their
+    matching audit events as `caller`, distinct identities on each side.
+    """
+    store = StateStore(tmp_path / "state.json")
+
+    action = store.add_pending_action(
+        process_id="order-1",
+        tool="gmail",
+        description="Send a follow-up email",
+        payload={"to": "customer@realcorp.io"},
+        proposed_by="orchestrator-service",
+    )
+    assert action["proposed_by"] == "orchestrator-service"
+
+    resolved = store.resolve_pending_action(action["id"], approved=True, decided_by="alice")
+    assert resolved["decided_by"] == "alice"
+
+    events = store.list_events(process_id="order-1")
+    proposed_event = next(e for e in events if e["event_type"] == "action_proposed")
+    approved_event = next(e for e in events if e["event_type"] == "action_approved")
+    assert proposed_event["caller"] == "orchestrator-service"
+    assert approved_event["caller"] == "alice"
+
+
+def test_pending_action_proposed_by_defaults_to_none(tmp_path: Path) -> None:
+    """Auth off (the default) -- no caller was ever supplied, and
+    nothing here invents one.
+    """
+    store = StateStore(tmp_path / "state.json")
+
+    action = store.add_pending_action(
+        process_id="order-1", tool="gmail", description="x", payload={}
+    )
+    assert action["proposed_by"] is None
+
+    resolved = store.resolve_pending_action(action["id"], approved=True)
+    assert resolved["decided_by"] is None
+
+    events = store.list_events(process_id="order-1")
+    assert all(e["caller"] is None for e in events)
+
+
 def test_pending_action_category_is_stored_and_logged(tmp_path: Path) -> None:
     """Category flows through to both the pending-action record and every
     audit event logged for it (proposed and, here, approved) -- this is

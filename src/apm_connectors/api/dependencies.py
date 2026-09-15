@@ -9,6 +9,10 @@ write proposal and its decision for the same process_id.
 Tests override these via `app.dependency_overrides` with a store/tools
 built from fake clients (see tests/test_tools_api.py) — real credentials
 are only needed to actually run the server, never to test it.
+
+require_caller (the auth dependency, at the bottom) is the one exception
+to "built once": it runs on every request, since it has to look at that
+request's own Authorization header.
 """
 
 from __future__ import annotations
@@ -16,12 +20,15 @@ from __future__ import annotations
 from functools import lru_cache
 from typing import Any
 
+from fastapi import HTTPException, Security
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from langgraph.checkpoint.memory import MemorySaver
 
 from apm_connectors.config import load_settings
 from apm_connectors.graph import build_action_graph
 from apm_connectors.state.store import StateStore, StateStoreProtocol
 from apm_connectors.tools.base import BaseTool
+from apm_connectors.tools.drive_tool import build_configured_drive_tool
 from apm_connectors.tools.excel_file_tool import build_configured_excel_tool
 from apm_connectors.tools.google_auth import build_gmail_and_calendar_tools
 from apm_connectors.tools.jira_tool import build_configured_jira_tool
@@ -97,6 +104,10 @@ def get_tools() -> dict[str, BaseTool]:
     if excel_tool is not None:
         tools["excel_file"] = excel_tool
 
+    drive_tool = build_configured_drive_tool(state, settings)
+    if drive_tool is not None:
+        tools["drive"] = drive_tool
+
     salesforce_tool = build_configured_salesforce_tool(state, settings)
     if salesforce_tool is not None:
         tools["salesforce"] = salesforce_tool
@@ -131,3 +142,48 @@ def get_action_graph():
     else:
         checkpointer = MemorySaver()
     return build_action_graph(get_tools(), get_state_store(), checkpointer=checkpointer)
+
+
+@lru_cache
+def get_api_keys() -> dict[str, str]:
+    """{key: caller_name}, parsed once per process from APM_API_KEYS.
+    Empty means auth is off -- see require_caller below.
+    """
+    return load_settings().api_keys
+
+
+_bearer_scheme = HTTPBearer(auto_error=False)
+
+
+def require_caller(
+    credentials: HTTPAuthorizationCredentials | None = Security(_bearer_scheme),
+) -> str | None:
+    """The auth gate for every /tools/* and /processes/* route (never
+    /health -- a load balancer's health check carries no credentials).
+
+    Opt-in, like every other piece of optional config in this package
+    (Excel/Salesforce/Jira/Drive: unset env var = feature absent): with
+    no APM_API_KEYS configured, this returns None and every route
+    behaves exactly as documented today ("No auth today" in
+    docs/api-contract.md) -- the local-dev default. Once APM_API_KEYS
+    is set, every request needs `Authorization: Bearer <key>` matching
+    one of the configured keys, or this raises 401.
+
+    The return value -- the caller's configured name, or None when auth
+    is off -- is what a write-proposing or decision route passes through
+    to the state store as `proposed_by`/`decided_by` (see graph.py and
+    state/store.py), so the audit trail can say *who*, not just *what*,
+    once this is turned on. A route that doesn't need that value still
+    gets the same 401 gate via the router-level dependency
+    (tools_routes.router's `dependencies=`) without declaring this
+    parameter itself.
+    """
+    api_keys = get_api_keys()
+    if not api_keys:
+        return None
+    if credentials is None:
+        raise HTTPException(status_code=401, detail="Missing bearer token")
+    caller = api_keys.get(credentials.credentials)
+    if caller is None:
+        raise HTTPException(status_code=401, detail="Invalid API key")
+    return caller

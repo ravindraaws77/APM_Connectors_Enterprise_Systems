@@ -2,9 +2,9 @@
 
 The connector/enterprise-systems layer of the APM (Agentic Process
 Management) project, extracted into its own standalone, shippable
-service — Gmail, Google Calendar, Excel, Salesforce, and Jira
-connectors behind a plain read/write HTTP API, plus a small LangGraph
-process that gates every write behind explicit human approval.
+service — Gmail, Google Calendar, Excel, Drive documents, Salesforce,
+and Jira connectors behind a plain read/write HTTP API, plus a small
+LangGraph process that gates every write behind explicit human approval.
 
 > This package has **no reasoning of its own**. It's built to be
 > plugged into any reasoning/orchestration layer — deployed separately

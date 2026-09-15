@@ -13,10 +13,13 @@ the `service_url` Terraform output from `infra/aws/ecs-fargate/`, or
 `http://127.0.0.1:8000` for someone running it locally). Every example
 below uses `$BASE_URL` for that.
 
-**No authentication exists on this API today** (a known, documented
-gap — see `docs/api-contract.md`'s "No auth today" note). Treat the URL
-as sensitive: anyone who has it can call every route, including
-proposing writes. Don't post it anywhere public.
+**Ask whether the instance you're targeting has auth enabled**
+(`APM_API_KEYS` — see `docs/api-contract.md`'s "Auth is opt-in"). If
+not, treat the URL as sensitive: anyone who has it can call every
+route, including proposing writes — don't post it anywhere public. If
+it does, get an API key from whoever deployed it and send it as
+`Authorization: Bearer <key>` on every request below (`GET
+$BASE_URL/health` is the one route that never needs it).
 
 ## Option A: calling it directly from your own application
 
@@ -61,15 +64,22 @@ connector logic needed.
      "mcpServers": {
        "apm-connectors": {
          "command": "apm-connectors-mcp",
-         "env": { "APM_CONNECTORS_BASE_URL": "https://your-base-url-here" }
+         "env": {
+           "APM_CONNECTORS_BASE_URL": "https://your-base-url-here",
+           "APM_CONNECTORS_API_KEY": "your-key-here"
+         }
        }
      }
    }
    ```
+   (Omit `APM_CONNECTORS_API_KEY` if the instance has no auth enabled.)
 
    **Claude Code** — either add the same shape to `.mcp.json`, or:
    ```
-   claude mcp add apm-connectors --env APM_CONNECTORS_BASE_URL=https://your-base-url-here -- apm-connectors-mcp
+   claude mcp add apm-connectors \
+     --env APM_CONNECTORS_BASE_URL=https://your-base-url-here \
+     --env APM_CONNECTORS_API_KEY=your-key-here \
+     -- apm-connectors-mcp
    ```
 3. Restart the Claude host. The tools listed in
    `src/apm_connectors_mcp/server.py` (their docstrings are the
@@ -84,8 +94,9 @@ it, same as any other caller.
 
 ## Known limitations to plan around
 
-- **No auth** (see above) — don't point this at anything but a trusted
-  network/team for now.
+- **Auth is opt-in** (see above) — if the instance you're targeting
+  hasn't set `APM_API_KEYS`, don't point it at anything but a trusted
+  network/team.
 - **HTTP, not HTTPS**, on the AWS deployment (`infra/aws/ecs-fargate/`)
   — see `docs/deployment.md`.
 - **State is ephemeral unless the deployment configured `DATABASE_URL`**
