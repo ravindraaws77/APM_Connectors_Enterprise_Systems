@@ -42,12 +42,12 @@ target state.
   application's perspective.
 - With `APM_API_KEYS` configured (section 1), *who* is a verified
   identity, not just a label: every proposed write records its
-  authenticated caller as `proposed_by`, and every decision records its
+  authenticated caller as `proposed_by`, every decision records its
   authenticated caller as `decided_by` — two independent fields, since
-  the human deciding a write is often not whatever proposed it. Both
-  are `null` with auth off, or for a plain read (not yet threaded
-  through every connector's own logging — a known gap, not a silent
-  one: see `src/apm_connectors/state/store.py`'s `log_event` docstring).
+  the human deciding a write is often not whatever proposed it — and
+  every read (`gmail_search`, `salesforce_query`, etc.) records its
+  caller too, as the audit event's `caller` field. All of these are
+  `null` with auth off.
 
 ## 5. The core guardrail: human approval before any write/send/action
 

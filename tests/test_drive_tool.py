@@ -86,6 +86,20 @@ def test_list_files_scoped_to_folder_logs(tmp_path: Path) -> None:
     assert any(e["event_type"] == "read" and e["details"]["folder_id"] == FOLDER_ID for e in events)
 
 
+def test_list_files_and_read_file_log_caller(tmp_path: Path) -> None:
+    store = StateStore(tmp_path / "state.json")
+    client = FakeDriveClient()
+    client.add_file("f1", "Contract.pdf", "application/pdf", [FOLDER_ID], b"pdf-bytes")
+    tool = DriveTool(store, client, folder_id=FOLDER_ID)
+
+    tool.list_files("order-1", caller="alice")
+    tool.read_file("order-1", file_id="f1", caller="alice")
+
+    events = [e for e in store.list_events("order-1") if e["event_type"] == "read"]
+    assert len(events) == 2
+    assert all(e["caller"] == "alice" for e in events)
+
+
 def test_read_file_returns_base64_content_and_logs_without_it(tmp_path: Path) -> None:
     store = StateStore(tmp_path / "state.json")
     client = FakeDriveClient()

@@ -114,13 +114,14 @@ class StateStore:
         caller: str | None = None,
     ) -> AuditEvent:
         """`caller` is the authenticated identity that made this call
-        (require_caller's return value), when known -- currently only
-        ever supplied for a proposed action or a decision (see
-        add_pending_action/resolve_pending_action below); a plain read
-        or an execute_node write logs with caller=None regardless of
-        auth, since that attribution isn't threaded through
-        BaseTool/execute_node yet. Not a gap this method hides: None
-        here means "not attributed", not "no caller existed".
+        (require_caller's return value), when known -- None with auth
+        off. Every read logs it via BaseTool._log (see tools/base.py),
+        and add_pending_action/resolve_pending_action below log it for a
+        proposed action / a decision, as proposed_by/decided_by
+        respectively. An execute_node write's own "action_executed" log
+        (via require_dry_run_guard) still logs caller=None regardless of
+        auth -- that write's caller is already captured as decided_by
+        on the approval that authorized it, one event earlier.
         """
         event = AuditEvent(
             id=str(uuid.uuid4()),

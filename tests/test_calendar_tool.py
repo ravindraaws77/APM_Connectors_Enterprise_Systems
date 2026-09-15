@@ -97,6 +97,21 @@ def test_read_event(tmp_path: Path) -> None:
     assert summary.title == "Kickoff"
 
 
+def test_search_events_and_read_event_log_caller(tmp_path: Path) -> None:
+    store = StateStore(tmp_path / "state.json")
+    client = FakeCalendarClient(
+        [_raw_event("e1", "Kickoff", "2026-09-05T09:00:00Z", "2026-09-05T09:30:00Z", [])]
+    )
+    tool = CalendarTool(store, client)
+
+    tool.search_events("order-1", caller="alice")
+    tool.read_event("order-1", "e1", caller="alice")
+
+    events = [e for e in store.list_events("order-1") if e["event_type"] == "read"]
+    assert len(events) == 2
+    assert all(e["caller"] == "alice" for e in events)
+
+
 def test_missing_fields_fall_back_to_defaults(tmp_path: Path) -> None:
     store = StateStore(tmp_path / "state.json")
     client = FakeCalendarClient([{"id": "e2"}])

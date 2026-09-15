@@ -559,3 +559,20 @@ def test_propose_and_decide_attribute_different_authenticated_callers(tmp_path: 
     approved_event = next(e for e in events if e["event_type"] == "action_approved")
     assert proposed_event["caller"] == "orchestrator-service"
     assert approved_event["caller"] == "alice"
+
+
+def test_read_routes_attribute_the_authenticated_caller(tmp_path: Path) -> None:
+    """Not just proposed_by/decided_by on writes -- a plain read (any
+    tool, gmail_search here) is attributed too once a caller is known,
+    end to end through the route into the state store.
+    """
+    message = _raw_message("m1", sender="a@b.com", subject="Hi", snippet="hello", date="2026-09-01")
+    client, store, *_ = _client(tmp_path, gmail_messages=[message])
+    client.app.dependency_overrides[require_caller] = lambda: "alice"
+
+    response = client.post("/tools/gmail/search", json={"process_id": "order-21", "query": "x"})
+
+    assert response.status_code == 200
+    events = [e for e in store.list_events("order-21") if e["event_type"] == "read"]
+    assert len(events) == 1
+    assert events[0]["caller"] == "alice"

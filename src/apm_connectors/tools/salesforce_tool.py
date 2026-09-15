@@ -67,7 +67,7 @@ class SalesforceTool(BaseTool):
         except Exception:
             return False
 
-    def query_records(self, process_id: str, soql: str) -> list[SalesforceRecord]:
+    def query_records(self, process_id: str, soql: str, caller: str | None = None) -> list[SalesforceRecord]:
         """Run a read-only SOQL query (e.g.
         `"SELECT Id, Name, StageName FROM Opportunity WHERE AccountId = '001..' LIMIT 20"`)
         and return normalized records. Cap result size with SOQL's own
@@ -81,16 +81,20 @@ class SalesforceTool(BaseTool):
             "read",
             f"Queried Salesforce ('{soql}'), found {len(records)} record(s)",
             {"soql": soql, "count": len(records)},
+            caller=caller,
         )
         return records
 
-    def get_record(self, process_id: str, object_name: str, record_id: str) -> SalesforceRecord:
+    def get_record(
+        self, process_id: str, object_name: str, record_id: str, caller: str | None = None
+    ) -> SalesforceRecord:
         record = self._to_record(self._client.get_record(object_name, record_id), object_type=object_name)
         self._log(
             process_id,
             "read",
             f"Read Salesforce {object_name} record {record_id}",
             {"object_name": object_name, "record_id": record_id},
+            caller=caller,
         )
         return record
 

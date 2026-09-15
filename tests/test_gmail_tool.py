@@ -86,6 +86,23 @@ def test_read_message(tmp_path: Path) -> None:
     assert summary.subject == "Hi there"
 
 
+def test_search_emails_and_read_message_log_caller(tmp_path: Path) -> None:
+    """caller (the authenticated identity behind the request, when auth
+    is on -- see api.dependencies.require_caller) is attributed on reads
+    too, not just proposed/decided writes.
+    """
+    store = StateStore(tmp_path / "state.json")
+    client = FakeGmailClient([_raw_message("m1", "a@b.com", "Hi there", "snippet text", "date")])
+    tool = GmailTool(store, client)
+
+    tool.search_emails("order-1", query="x", caller="alice")
+    tool.read_message("order-1", "m1", caller="alice")
+
+    events = [e for e in store.list_events("order-1") if e["event_type"] == "read"]
+    assert len(events) == 2
+    assert all(e["caller"] == "alice" for e in events)
+
+
 def test_missing_headers_fall_back_to_defaults(tmp_path: Path) -> None:
     store = StateStore(tmp_path / "state.json")
     client = FakeGmailClient([{"id": "m2", "snippet": "no headers here"}])

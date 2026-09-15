@@ -86,11 +86,12 @@ production, close the gap `docs/api-contract.md` already documents:
 - **Done:** the audit log (`StateStoreProtocol`) now records *which*
   authenticated caller proposed an action (`proposed_by`) and *which*
   authenticated human decided it (`decided_by`), as two independent
-  identities — both `null` with auth off. Scoped deliberately to the
-  propose/decide path only: a plain read isn't attributed yet, since
-  that would mean threading a caller identity through every
-  connector's own `BaseTool._log` calls, not just the graph — a
-  natural next increment, not done here.
+  identities — both `null` with auth off.
+- **Done:** every read (`gmail_search`, `salesforce_query`, etc.) is
+  attributed too, as the audit event's `caller` field — `BaseTool._log`
+  and every connector's read methods now take an optional `caller`,
+  threaded from `require_caller` through each `/tools/*` read route.
+  Closes the gap the first version of this bullet left open.
 - **Done:** a general Drive documents connector (`drive_tool.py`) —
   list/search files, download/read a file, upload/update a file,
   scoped to one configured folder (`APM_DRIVE_FOLDER_ID`) — following

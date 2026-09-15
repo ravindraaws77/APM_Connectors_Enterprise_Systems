@@ -87,6 +87,19 @@ def test_list_worksheets_logs(tmp_path: Path) -> None:
     assert any(e["event_type"] == "read" and e["details"]["worksheets"] == names for e in events)
 
 
+def test_list_worksheets_and_read_range_log_caller(tmp_path: Path) -> None:
+    store = StateStore(tmp_path / "state.json")
+    source = FakeWorkbookSource(_sample_workbook_bytes())
+    tool = ExcelFileTool(store, source)
+
+    tool.list_worksheets("order-123", caller="alice")
+    tool.read_range("order-123", sheet_name="Renewals", address="A1:B2", caller="alice")
+
+    events = [e for e in store.list_events("order-123") if e["event_type"] == "read"]
+    assert len(events) == 2
+    assert all(e["caller"] == "alice" for e in events)
+
+
 def test_read_range_returns_values_and_logs(tmp_path: Path) -> None:
     store = StateStore(tmp_path / "state.json")
     source = FakeWorkbookSource(_sample_workbook_bytes())

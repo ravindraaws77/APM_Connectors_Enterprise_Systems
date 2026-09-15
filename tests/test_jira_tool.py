@@ -104,6 +104,19 @@ def test_get_issue(tmp_path: Path) -> None:
     assert any(e["event_type"] == "read" and e["details"]["issue_key"] == "OPS-2" for e in events)
 
 
+def test_search_issues_and_get_issue_log_caller(tmp_path: Path) -> None:
+    store = StateStore(tmp_path / "state.json")
+    client = FakeJiraClient([_raw_issue("OPS-2", "Task", summary="Renew license")])
+    tool = JiraTool(store, client)
+
+    tool.search_issues("order-1", "project = OPS", caller="alice")
+    tool.get_issue("order-1", "OPS-2", caller="alice")
+
+    events = [e for e in store.list_events("order-1") if e["event_type"] == "read"]
+    assert len(events) == 2
+    assert all(e["caller"] == "alice" for e in events)
+
+
 def test_health_check_true(tmp_path: Path) -> None:
     store = StateStore(tmp_path / "state.json")
     tool = JiraTool(store, FakeJiraClient([]))

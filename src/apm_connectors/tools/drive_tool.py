@@ -107,7 +107,11 @@ class DriveTool(BaseTool):
             return False
 
     def list_files(
-        self, process_id: str, name_contains: str | None = None, max_results: int = 20
+        self,
+        process_id: str,
+        name_contains: str | None = None,
+        max_results: int = 20,
+        caller: str | None = None,
     ) -> list[DriveFileMetadata]:
         """List files directly inside the configured folder, optionally
         filtered by a substring of the file name.
@@ -132,10 +136,11 @@ class DriveTool(BaseTool):
             "read",
             f"Listed {len(results)} file(s) in Drive folder {self._folder_id}",
             {"folder_id": self._folder_id, "files": [{"file_id": r.file_id, "name": r.name} for r in results]},
+            caller=caller,
         )
         return results
 
-    def read_file(self, process_id: str, file_id: str) -> DriveFileContent:
+    def read_file(self, process_id: str, file_id: str, caller: str | None = None) -> DriveFileContent:
         """Download one file's contents, base64-encoded. Refuses (raises
         PermissionError) if the file isn't inside the configured folder.
         """
@@ -157,6 +162,7 @@ class DriveTool(BaseTool):
             "read",
             f"Read file {result.name!r} ({result.size} bytes) from Drive",
             {"file_id": file_id, "name": result.name, "mime_type": result.mime_type, "size": result.size},
+            caller=caller,
         )
         return result
 

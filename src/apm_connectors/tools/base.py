@@ -58,13 +58,20 @@ class BaseTool(ABC):
         event_type: str,
         summary: str,
         details: dict[str, Any] | None = None,
+        caller: str | None = None,
     ) -> None:
+        """`caller` is the authenticated identity that made this call
+        (api.dependencies.require_caller's return value), when the route
+        calling into this tool passed one through -- None when auth is
+        off, or for a call site that hasn't been updated to pass it.
+        """
         self._state.log_event(
             process_id=process_id,
             tool=self.name,
             event_type=event_type,  # type: ignore[arg-type]
             summary=summary,
             details=details or {},
+            caller=caller,
         )
 
     @abstractmethod

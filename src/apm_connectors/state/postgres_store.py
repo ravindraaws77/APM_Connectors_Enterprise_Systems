@@ -63,8 +63,9 @@ CREATE INDEX IF NOT EXISTS apm_pending_actions_status_idx ON apm_pending_actions
 -- separate migration step (see docs/deployment.md's "no separate
 -- migration step" promise). All nullable: a caller is only ever known
 -- when APM_API_KEYS is configured (apm_connectors.api.dependencies.
--- require_caller), and only for a propose/decide call, not yet for a
--- plain read or an execute_node write (see store.py's log_event).
+-- require_caller) -- see store.py's log_event for which event types
+-- get one (every read, every propose, every decide) and which still
+-- don't (an execute_node write's own "action_executed" log).
 ALTER TABLE apm_events ADD COLUMN IF NOT EXISTS caller TEXT;
 ALTER TABLE apm_pending_actions ADD COLUMN IF NOT EXISTS proposed_by TEXT;
 ALTER TABLE apm_pending_actions ADD COLUMN IF NOT EXISTS decided_by TEXT;
