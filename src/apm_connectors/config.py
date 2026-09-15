@@ -9,7 +9,7 @@ gates their writes.
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 try:
@@ -59,6 +59,34 @@ class Settings:
     # A standard "postgresql://user:pass@host:port/dbname" URL. Requires
     # the optional `postgres` extra (`pip install -e ".[postgres]"`).
     database_url: str | None = None
+    # API auth, opt-in like every other setting above: {key: caller_name},
+    # parsed from APM_API_KEYS. Empty (unset) means auth is off -- every
+    # /tools/* and /processes/* route behaves exactly as before (see
+    # docs/api-contract.md's "No auth today"). See api/dependencies.py's
+    # require_caller for how this is enforced, and this module's
+    # _parse_api_keys for the "name:key,name:key" format.
+    api_keys: dict[str, str] = field(default_factory=dict)
+
+
+def _parse_api_keys(raw: str | None) -> dict[str, str]:
+    """Parses APM_API_KEYS="name1:key1,name2:key2" into {key: name} --
+    keyed by the token a caller actually presents (Authorization: Bearer
+    <key>), so require_caller can look one up in O(1) and attribute it
+    to a human-readable name in the audit trail. Unset/empty -> {} (auth
+    disabled entirely, the local-dev default).
+    """
+    if not raw:
+        return {}
+    keys: dict[str, str] = {}
+    for entry in raw.split(","):
+        entry = entry.strip()
+        if not entry:
+            continue
+        name, sep, key = entry.partition(":")
+        if not sep or not name or not key:
+            raise ValueError(f"Malformed APM_API_KEYS entry {entry!r} -- expected \"name:key\"")
+        keys[key] = name
+    return keys
 
 
 def load_settings() -> Settings:
@@ -78,4 +106,5 @@ def load_settings() -> Settings:
         jira_api_token=os.environ.get("JIRA_API_TOKEN"),
         drive_folder_id=os.environ.get("APM_DRIVE_FOLDER_ID"),
         database_url=os.environ.get("DATABASE_URL"),
+        api_keys=_parse_api_keys(os.environ.get("APM_API_KEYS")),
     )

@@ -23,6 +23,7 @@ your AWS credentials itself.
 [Enabling real Salesforce](#enabling-real-salesforce-on-this-deployment) ·
 [Enabling real Jira](#enabling-real-jira-on-this-deployment) ·
 [Enabling durable state (Postgres)](#enabling-durable-state-postgres-on-this-deployment) ·
+[Enabling API auth](#enabling-api-auth-on-this-deployment) ·
 [Known limitations](#known-limitations-mvp-tradeoff-same-as-running-locally) ·
 [Troubleshooting](#troubleshooting) ·
 [Local Docker (no AWS)](#local-docker-no-aws) ·
@@ -241,6 +242,38 @@ and replaces the dead connection — both pools here do
 (`check=ConnectionPool.check_connection` in `state/postgres_store.py`
 and `api/dependencies.py`), so this recovers on its own.
 
+## Enabling API auth on this deployment
+
+By default this deployment has no auth (see docs/api-contract.md's
+"Auth is opt-in") — fine while it's only reachable from a network
+boundary you already trust, but set this before anything else (an
+orchestration layer, an avatar/agent front-end, a human's browser)
+calls it over the public internet:
+
+```
+api_keys = "orchestrator:sk_live_..., alice:sk_live_..."
+```
+
+then `terraform apply`. Same format as `APM_API_KEYS` locally (see
+`.env.example`) — one `name:key` pair per caller, comma-separated.
+`api_keys` is stored as an SSM `SecureString`, the same as the other
+secrets, and — like `database_url` — only created and attached to the
+task at all when set: leaving it unset keeps today's no-auth default
+exactly as before, no empty/placeholder key involved. Once set, every
+`/tools/*` and `/processes/*` request against `service_url` needs
+`Authorization: Bearer <key>` matching one of these
+(`GET /health` stays open, for the ALB's own health check) — verify
+with:
+
+```
+python scripts/api_smoke_test.py --base-url http://<service_url> --api-key <one-of-the-keys-above>
+```
+
+Rotating a key (or adding/removing a caller) only updates the SSM
+parameter's value, not its ARN, which the task definition doesn't see
+as a change on its own — `terraform apply` forces the redeploy anyway
+(`null_resource.force_new_deployment`, same as every other secret here).
+
 ## Known limitations (MVP tradeoff, same as running locally)
 
 - **State is ephemeral unless `database_url` is set.** See "Enabling
@@ -251,6 +284,12 @@ and `api/dependencies.py`), so this recovers on its own.
   simplicity — there's no domain name or ACM certificate wired up here.
   Add an HTTPS listener (ACM cert + a domain in Route 53 or elsewhere)
   before putting anything sensitive through this beyond local testing.
+  A bearer token over plain HTTP (see "Enabling API auth" above) is
+  visible to anything on the network path — set `api_keys` and add
+  HTTPS together before this is reachable beyond a trusted boundary.
+- **No auth unless `api_keys` is set.** See "Enabling API auth on this
+  deployment" above — with it unset, this API has no auth at all, the
+  documented local-dev default carried through to this deployment too.
 - **Cost.** Unlike App Runner's pay-per-use pricing, an Application
   Load Balancer bills an hourly rate regardless of traffic (roughly
   $16-20/month left running continuously), on top of the Fargate task's

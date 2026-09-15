@@ -91,6 +91,36 @@ def test_rejection_does_not_execute(tmp_path: Path) -> None:
     assert store.list_pending_actions("order-1") == []
 
 
+def test_proposed_by_and_decided_by_flow_through_to_the_state_store(tmp_path: Path) -> None:
+    """proposed_by/decided_by (None when the API's auth is off) travel
+    from start_action/resume_process through GraphState into the state
+    store's pending-action record and audit events -- see
+    api/dependencies.require_caller for where they'd come from for real.
+    """
+    graph, store, gmail_client, _ = _build(tmp_path)
+
+    outcome = start_action(
+        graph,
+        "order-3",
+        tool="gmail",
+        method="send_email",
+        description="Send a follow-up email",
+        payload={"to": "customer@realcorp.io", "subject": "Update", "body": "Your order is delayed."},
+        proposed_by="orchestrator-service",
+    )
+    assert outcome.pending_action["proposed_by"] == "orchestrator-service"
+    assert store.list_pending_actions("order-3")[0]["proposed_by"] == "orchestrator-service"
+
+    resume_process(graph, "order-3", approved=True, decided_by="alice")
+
+    events = store.list_events("order-3")
+    proposed_event = next(e for e in events if e["event_type"] == "action_proposed")
+    executed_event = next(e for e in events if e["event_type"] == "action_approved")
+    assert proposed_event["caller"] == "orchestrator-service"
+    assert executed_event["caller"] == "alice"
+    assert len(gmail_client.sent) == 1
+
+
 def test_calendar_action_via_the_same_graph(tmp_path: Path) -> None:
     """A second tool through the same graph instance, to confirm nothing
     about propose/approval/execute is Gmail-specific.

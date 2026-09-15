@@ -108,6 +108,26 @@ def test_resolve_unknown_action_returns_none(store: PostgresStateStore) -> None:
     assert store.resolve_pending_action("does-not-exist", approved=True) is None
 
 
+def test_pending_action_proposed_by_and_decided_by_are_stored_and_logged(store: PostgresStateStore) -> None:
+    action = store.add_pending_action(
+        process_id="order-1",
+        tool="gmail",
+        description="Send a follow-up email",
+        payload={"to": "customer@realcorp.io"},
+        proposed_by="orchestrator-service",
+    )
+    assert action["proposed_by"] == "orchestrator-service"
+
+    resolved = store.resolve_pending_action(action["id"], approved=True, decided_by="alice")
+    assert resolved["decided_by"] == "alice"
+
+    events = store.list_events(process_id="order-1")
+    proposed_event = next(e for e in events if e["event_type"] == "action_proposed")
+    approved_event = next(e for e in events if e["event_type"] == "action_approved")
+    assert proposed_event["caller"] == "orchestrator-service"
+    assert approved_event["caller"] == "alice"
+
+
 def test_pending_action_category_is_stored_and_logged(store: PostgresStateStore) -> None:
     action = store.add_pending_action(
         process_id="order-1",

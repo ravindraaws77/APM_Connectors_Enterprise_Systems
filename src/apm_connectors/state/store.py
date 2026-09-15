@@ -48,6 +48,10 @@ class AuditEvent:
     event_type: EventType
     summary: str
     details: dict[str, Any] = field(default_factory=dict)
+    # Who made this call, when auth is enabled (apm_connectors.api.
+    # dependencies.require_caller) -- None when it's off, or for an event
+    # type this package doesn't yet attribute (see log_event's docstring).
+    caller: str | None = None
 
 
 class StateStore:
@@ -107,7 +111,17 @@ class StateStore:
         event_type: EventType,
         summary: str,
         details: dict[str, Any] | None = None,
+        caller: str | None = None,
     ) -> AuditEvent:
+        """`caller` is the authenticated identity that made this call
+        (require_caller's return value), when known -- currently only
+        ever supplied for a proposed action or a decision (see
+        add_pending_action/resolve_pending_action below); a plain read
+        or an execute_node write logs with caller=None regardless of
+        auth, since that attribution isn't threaded through
+        BaseTool/execute_node yet. Not a gap this method hides: None
+        here means "not attributed", not "no caller existed".
+        """
         event = AuditEvent(
             id=str(uuid.uuid4()),
             timestamp=_now(),
@@ -116,6 +130,7 @@ class StateStore:
             event_type=event_type,
             summary=summary,
             details=details or {},
+            caller=caller,
         )
         with self._lock:
             data = self._read()
@@ -147,6 +162,7 @@ class StateStore:
         description: str,
         payload: dict[str, Any],
         category: str = "other",
+        proposed_by: str | None = None,
     ) -> dict[str, Any]:
         """`category` is a short, stable slug (e.g. "shipment_delay") from
         the reasoner's classification of the underlying situation — see
@@ -154,6 +170,10 @@ class StateStore:
         included in every audit event logged for it, so the UI's History
         table can color-code by category to surface recurring patterns
         across processes, not just within one.
+
+        `proposed_by` is the authenticated caller that proposed this
+        action (None when auth is off) -- carried on the action record
+        and its "action_proposed" audit event the same way `category` is.
         """
         action = {
             "id": str(uuid.uuid4()),
@@ -162,6 +182,7 @@ class StateStore:
             "description": description,
             "payload": payload,
             "category": category,
+            "proposed_by": proposed_by,
             "status": "pending",
             "created_at": _now(),
         }
@@ -169,7 +190,9 @@ class StateStore:
             data = self._read()
             data.setdefault("pending_actions", []).append(action)
             self._write(data)
-        self.log_event(process_id, tool, "action_proposed", description, {"category": category, **payload})
+        self.log_event(
+            process_id, tool, "action_proposed", description, {"category": category, **payload}, caller=proposed_by
+        )
         return action
 
     def list_pending_actions(self, process_id: str | None = None) -> list[dict[str, Any]]:
@@ -181,8 +204,13 @@ class StateStore:
         return actions
 
     def resolve_pending_action(
-        self, action_id: str, approved: bool
+        self, action_id: str, approved: bool, decided_by: str | None = None
     ) -> dict[str, Any] | None:
+        """`decided_by` is the authenticated human that approved/rejected
+        this action (None when auth is off) -- carried on the resolved
+        action record and its "action_approved"/"action_rejected" audit
+        event, same as `proposed_by` on the propose side.
+        """
         with self._lock:
             data = self._read()
             actions = data.get("pending_actions", [])
@@ -190,6 +218,7 @@ class StateStore:
             if action is None:
                 return None
             action["status"] = "approved" if approved else "rejected"
+            action["decided_by"] = decided_by
             action["resolved_at"] = _now()
             self._write(data)
         self.log_event(
@@ -198,6 +227,7 @@ class StateStore:
             "action_approved" if approved else "action_rejected",
             action["description"],
             {"category": action.get("category", "other"), **action["payload"]},
+            caller=decided_by,
         )
         return action
 
@@ -223,6 +253,7 @@ class StateStoreProtocol(Protocol):
         event_type: EventType,
         summary: str,
         details: dict[str, Any] | None = None,
+        caller: str | None = None,
     ) -> Any: ...
 
     def list_events(
@@ -236,8 +267,11 @@ class StateStoreProtocol(Protocol):
         description: str,
         payload: dict[str, Any],
         category: str = "other",
+        proposed_by: str | None = None,
     ) -> dict[str, Any]: ...
 
     def list_pending_actions(self, process_id: str | None = None) -> list[dict[str, Any]]: ...
 
-    def resolve_pending_action(self, action_id: str, approved: bool) -> dict[str, Any] | None: ...
+    def resolve_pending_action(
+        self, action_id: str, approved: bool, decided_by: str | None = None
+    ) -> dict[str, Any] | None: ...

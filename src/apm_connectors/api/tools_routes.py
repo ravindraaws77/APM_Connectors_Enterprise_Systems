@@ -20,6 +20,14 @@ as the action_id a write's response hands back for the decision call.
 See docs/api-contract.md for the full HTTP contract this router
 implements — not meant to be reachable by an outside customer directly,
 just the surface an internal reasoning/orchestration component calls.
+
+Every route here sits behind require_caller (router-level `dependencies=`
+below) -- a no-op unless APM_API_KEYS is configured (see
+api/dependencies.py), at which point every request needs a valid bearer
+token. A write/decision route also declares it as a normal parameter to
+get the resolved caller name back (FastAPI caches a dependency's result
+per request, so this doesn't re-check the token) and thread it into
+start_action/resume_process as proposed_by/decided_by.
 """
 
 from __future__ import annotations
@@ -29,7 +37,7 @@ import uuid
 from fastapi import APIRouter, Depends, HTTPException
 
 from apm_connectors.api._responses import to_response, upstream_error
-from apm_connectors.api.dependencies import get_action_graph, get_tools
+from apm_connectors.api.dependencies import get_action_graph, get_tools, require_caller
 from apm_connectors.api.schemas import (
     CalendarCreateEventRequest,
     CalendarReadRequest,
@@ -58,7 +66,7 @@ from apm_connectors.api.schemas import (
 from apm_connectors.graph import resume_process, start_action
 from apm_connectors.tools.base import BaseTool
 
-router = APIRouter(prefix="/tools", tags=["tools"])
+router = APIRouter(prefix="/tools", tags=["tools"], dependencies=[Depends(require_caller)])
 
 
 def _tool(tools: dict[str, BaseTool], name: str) -> BaseTool:
@@ -76,9 +84,19 @@ def _resolve_process_id(process_id: str | None) -> str:
     return process_id or str(uuid.uuid4())
 
 
-def _propose(graph, process_id: str, tool: str, method: str, description: str, payload: dict) -> RunOutcomeResponse:
+def _propose(
+    graph,
+    process_id: str,
+    tool: str,
+    method: str,
+    description: str,
+    payload: dict,
+    caller: str | None = None,
+) -> RunOutcomeResponse:
     try:
-        outcome = start_action(graph, process_id, tool=tool, method=method, description=description, payload=payload)
+        outcome = start_action(
+            graph, process_id, tool=tool, method=method, description=description, payload=payload, proposed_by=caller
+        )
     except Exception as exc:
         raise upstream_error(exc) from exc
     return to_response(outcome)
@@ -114,12 +132,13 @@ def gmail_send(
     body: GmailSendRequest,
     tools: dict[str, BaseTool] = Depends(get_tools),
     graph=Depends(get_action_graph),
+    caller: str | None = Depends(require_caller),
 ) -> RunOutcomeResponse:
     _tool(tools, "gmail")  # fail fast, before recording a pending action doomed to fail on approval
     action_id = _resolve_process_id(body.process_id)
     description = f"Send email to {body.to}: {body.subject!r}"
     payload = {"to": body.to, "subject": body.subject, "body": body.body}
-    return _propose(graph, action_id, "gmail", "send_email", description, payload)
+    return _propose(graph, action_id, "gmail", "send_email", description, payload, caller=caller)
 
 
 # -- Calendar ---------------------------------------------------------------
@@ -158,6 +177,7 @@ def calendar_create_event(
     body: CalendarCreateEventRequest,
     tools: dict[str, BaseTool] = Depends(get_tools),
     graph=Depends(get_action_graph),
+    caller: str | None = Depends(require_caller),
 ) -> RunOutcomeResponse:
     _tool(tools, "google_calendar")
     action_id = _resolve_process_id(body.process_id)
@@ -169,7 +189,7 @@ def calendar_create_event(
         "attendees": body.attendees,
         "location": body.location,
     }
-    return _propose(graph, action_id, "google_calendar", "create_event", description, payload)
+    return _propose(graph, action_id, "google_calendar", "create_event", description, payload, caller=caller)
 
 
 # -- Excel --------------------------------------------------------------
@@ -201,12 +221,13 @@ def excel_write(
     body: ExcelWriteRequest,
     tools: dict[str, BaseTool] = Depends(get_tools),
     graph=Depends(get_action_graph),
+    caller: str | None = Depends(require_caller),
 ) -> RunOutcomeResponse:
     _tool(tools, "excel_file")
     action_id = _resolve_process_id(body.process_id)
     description = f"Write {len(body.values)} row(s) to {body.sheet_name}!{body.address}"
     payload = {"sheet_name": body.sheet_name, "address": body.address, "values": body.values}
-    return _propose(graph, action_id, "excel_file", "write_range", description, payload)
+    return _propose(graph, action_id, "excel_file", "write_range", description, payload, caller=caller)
 
 
 # -- Drive (documents) ---------------------------------------------------
@@ -239,12 +260,13 @@ def drive_upload(
     body: DriveUploadRequest,
     tools: dict[str, BaseTool] = Depends(get_tools),
     graph=Depends(get_action_graph),
+    caller: str | None = Depends(require_caller),
 ) -> RunOutcomeResponse:
     _tool(tools, "drive")  # fail fast, before recording a pending action doomed to fail on approval
     action_id = _resolve_process_id(body.process_id)
     description = f"Upload document '{body.name}' ({body.mime_type}) to Drive"
     payload = {"name": body.name, "content_base64": body.content_base64, "mime_type": body.mime_type}
-    return _propose(graph, action_id, "drive", "upload_file", description, payload)
+    return _propose(graph, action_id, "drive", "upload_file", description, payload, caller=caller)
 
 
 @router.post("/drive/update", response_model=RunOutcomeResponse)
@@ -252,12 +274,13 @@ def drive_update(
     body: DriveUpdateRequest,
     tools: dict[str, BaseTool] = Depends(get_tools),
     graph=Depends(get_action_graph),
+    caller: str | None = Depends(require_caller),
 ) -> RunOutcomeResponse:
     _tool(tools, "drive")
     action_id = _resolve_process_id(body.process_id)
     description = f"Replace contents of Drive file {body.file_id}"
     payload = {"file_id": body.file_id, "content_base64": body.content_base64}
-    return _propose(graph, action_id, "drive", "update_file", description, payload)
+    return _propose(graph, action_id, "drive", "update_file", description, payload, caller=caller)
 
 
 # -- Salesforce ---------------------------------------------------------
@@ -290,12 +313,13 @@ def salesforce_create(
     body: SalesforceCreateRequest,
     tools: dict[str, BaseTool] = Depends(get_tools),
     graph=Depends(get_action_graph),
+    caller: str | None = Depends(require_caller),
 ) -> RunOutcomeResponse:
     _tool(tools, "salesforce")  # fail fast, before recording a pending action doomed to fail on approval
     action_id = _resolve_process_id(body.process_id)
     description = f"Create Salesforce {body.object_name} record"
     payload = {"object_name": body.object_name, "fields": body.fields}
-    return _propose(graph, action_id, "salesforce", "create_record", description, payload)
+    return _propose(graph, action_id, "salesforce", "create_record", description, payload, caller=caller)
 
 
 @router.post("/salesforce/update", response_model=RunOutcomeResponse)
@@ -303,12 +327,13 @@ def salesforce_update(
     body: SalesforceUpdateRequest,
     tools: dict[str, BaseTool] = Depends(get_tools),
     graph=Depends(get_action_graph),
+    caller: str | None = Depends(require_caller),
 ) -> RunOutcomeResponse:
     _tool(tools, "salesforce")
     action_id = _resolve_process_id(body.process_id)
     description = f"Update Salesforce {body.object_name} record {body.record_id}"
     payload = {"object_name": body.object_name, "record_id": body.record_id, "fields": body.fields}
-    return _propose(graph, action_id, "salesforce", "update_record", description, payload)
+    return _propose(graph, action_id, "salesforce", "update_record", description, payload, caller=caller)
 
 
 # -- Jira -----------------------------------------------------------------
@@ -341,12 +366,13 @@ def jira_create(
     body: JiraCreateRequest,
     tools: dict[str, BaseTool] = Depends(get_tools),
     graph=Depends(get_action_graph),
+    caller: str | None = Depends(require_caller),
 ) -> RunOutcomeResponse:
     _tool(tools, "jira")  # fail fast, before recording a pending action doomed to fail on approval
     action_id = _resolve_process_id(body.process_id)
     description = "Create Jira issue"
     payload = {"fields": body.fields}
-    return _propose(graph, action_id, "jira", "create_issue", description, payload)
+    return _propose(graph, action_id, "jira", "create_issue", description, payload, caller=caller)
 
 
 @router.post("/jira/update", response_model=RunOutcomeResponse)
@@ -354,21 +380,27 @@ def jira_update(
     body: JiraUpdateRequest,
     tools: dict[str, BaseTool] = Depends(get_tools),
     graph=Depends(get_action_graph),
+    caller: str | None = Depends(require_caller),
 ) -> RunOutcomeResponse:
     _tool(tools, "jira")
     action_id = _resolve_process_id(body.process_id)
     description = f"Update Jira issue {body.issue_key}"
     payload = {"issue_key": body.issue_key, "fields": body.fields}
-    return _propose(graph, action_id, "jira", "update_issue", description, payload)
+    return _propose(graph, action_id, "jira", "update_issue", description, payload, caller=caller)
 
 
 # -- Shared decision route for every /tools/* write above -------------------
 
 
 @router.post("/actions/{action_id}/decision", response_model=RunOutcomeResponse)
-def decide_action(action_id: str, body: DecisionRequest, graph=Depends(get_action_graph)) -> RunOutcomeResponse:
+def decide_action(
+    action_id: str,
+    body: DecisionRequest,
+    graph=Depends(get_action_graph),
+    caller: str | None = Depends(require_caller),
+) -> RunOutcomeResponse:
     try:
-        outcome = resume_process(graph, action_id, approved=body.approved)
+        outcome = resume_process(graph, action_id, approved=body.approved, decided_by=caller)
     except Exception as exc:
         raise upstream_error(exc) from exc
     return to_response(outcome)

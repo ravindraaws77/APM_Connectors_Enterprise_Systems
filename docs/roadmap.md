@@ -78,11 +78,19 @@ Before any external repo/avatar/real users call this API in
 production, close the gap `docs/api-contract.md` already documents:
 **"No auth today."**
 
-- Add an API-key or OAuth2 client-credentials check in front of
-  `/tools/*` and `/processes/*`.
-- Extend the audit log (`StateStoreProtocol`) to record *which*
-  authenticated caller proposed an action and *which* authenticated
-  human decided it — today it logs the event, not a verified identity.
+- **Done:** an API-key check (`APM_API_KEYS`, opt-in — see
+  `docs/api-contract.md`) in front of every `/tools/*` and
+  `/processes/*` route (`require_caller` in `api/dependencies.py`),
+  wired into the ECS Terraform module as an SSM secret the same way
+  `database_url` is.
+- **Done:** the audit log (`StateStoreProtocol`) now records *which*
+  authenticated caller proposed an action (`proposed_by`) and *which*
+  authenticated human decided it (`decided_by`), as two independent
+  identities — both `null` with auth off. Scoped deliberately to the
+  propose/decide path only: a plain read isn't attributed yet, since
+  that would mean threading a caller identity through every
+  connector's own `BaseTool._log` calls, not just the graph — a
+  natural next increment, not done here.
 - **Done:** a general Drive documents connector (`drive_tool.py`) —
   list/search files, download/read a file, upload/update a file,
   scoped to one configured folder (`APM_DRIVE_FOLDER_ID`) — following

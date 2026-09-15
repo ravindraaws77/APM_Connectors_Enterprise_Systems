@@ -36,8 +36,10 @@ class GraphState(TypedDict, total=False):
     process_id: str
     category: str
     proposed_action: dict[str, Any] | None
+    proposed_by: str | None
     pending_action_id: str | None
     decision: bool | None
+    decided_by: str | None
     result: dict[str, Any] | None
 
 
@@ -76,6 +78,7 @@ def _propose_node(state_store: StateStore):
             description=proposed["description"],
             payload=proposed,
             category=state.get("category", "other"),
+            proposed_by=state.get("proposed_by"),
         )
         return {"pending_action_id": action_record["id"]}
 
@@ -108,11 +111,13 @@ def _approval_node(state_store: StateStore):
                 "description": proposed["description"],
                 "payload": proposed["payload"],
                 "category": state.get("category", "other"),
+                "proposed_by": state.get("proposed_by"),
             }
         )
         approved = bool(decision.get("approved")) if isinstance(decision, dict) else bool(decision)
-        state_store.resolve_pending_action(action_id, approved=approved)
-        return {"decision": approved}
+        decided_by = decision.get("decided_by") if isinstance(decision, dict) else None
+        state_store.resolve_pending_action(action_id, approved=approved, decided_by=decided_by)
+        return {"decision": approved, "decided_by": decided_by}
 
     return approval_node
 
@@ -169,6 +174,7 @@ def start_action(
     description: str,
     payload: dict[str, Any],
     category: str = "manual",
+    proposed_by: str | None = None,
 ) -> RunOutcome:
     """Run the propose -> approval -> execute graph for a tool action a
     caller (a reasoning/orchestration layer, a script, a test) has
@@ -176,16 +182,32 @@ def start_action(
     (pending_action set) — the caller only calls this when it does want
     an action taken. Resume with resume_process(graph, process_id,
     approved=...), passing this same graph.
+
+    `proposed_by` is the authenticated caller proposing this action
+    (None when the API's auth is off, see api/dependencies.require_caller)
+    — carried onto the pending action record and its audit event, and
+    into the pending_action a human reviews, so they see who's asking.
     """
     proposed_action = {"tool": tool, "method": method, "description": description, "payload": payload}
-    initial_state: GraphState = {"process_id": process_id, "proposed_action": proposed_action, "category": category}
+    initial_state: GraphState = {
+        "process_id": process_id,
+        "proposed_action": proposed_action,
+        "category": category,
+        "proposed_by": proposed_by,
+    }
     result = graph.invoke(initial_state, config=_config(process_id))
     return _to_outcome(process_id, result)
 
 
-def resume_process(graph: Any, process_id: str, approved: bool) -> RunOutcome:
-    """Resume a paused graph with a human's Approve/Reject decision."""
-    result = graph.invoke(Command(resume={"approved": approved}), config=_config(process_id))
+def resume_process(graph: Any, process_id: str, approved: bool, decided_by: str | None = None) -> RunOutcome:
+    """Resume a paused graph with a human's Approve/Reject decision.
+    `decided_by` is the authenticated human making that decision (None
+    when auth is off) -- carried onto the resolved action record and its
+    audit event.
+    """
+    result = graph.invoke(
+        Command(resume={"approved": approved, "decided_by": decided_by}), config=_config(process_id)
+    )
     return _to_outcome(process_id, result)
 
 

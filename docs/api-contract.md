@@ -54,10 +54,22 @@ Wherever `uvicorn apm_connectors.api.app:app` is running, e.g.
     the server logs the full traceback.
   - `422` — the request body didn't match the schema (standard FastAPI
     validation).
-- **No auth today.** This API assumes a trusted internal caller — an
-  API key/bearer check before exposing this beyond a network boundary
-  it doesn't already trust is a known, separate piece of work, not yet
-  done.
+  - `401` — only once auth is enabled (see below): a missing or invalid
+    `Authorization` header.
+- **Auth is opt-in, off by default.** With no `APM_API_KEYS` set, every
+  route below (and `/processes/*`) behaves exactly as before — this API
+  assumes a trusted internal caller, no credentials needed. Set
+  `APM_API_KEYS` (see `.env.example`) before exposing a deployment
+  beyond a network boundary it doesn't already trust, and every request
+  then needs `Authorization: Bearer <key>` matching one of the
+  configured keys, or gets a 401 — `/health` is the one exception,
+  always reachable with no credentials (a load balancer's health check
+  carries none). Each key is tied to a caller name, which flows into
+  the audit trail: a write route records it as `proposed_by`, and
+  `POST /tools/actions/{action_id}/decision` records it as
+  `decided_by` — two independent identities, since the human deciding
+  a write is often not whatever proposed it. Both are `null` with auth
+  off. See `docs/security-guardrails.md`.
 
 ## Gmail
 
@@ -176,11 +188,17 @@ advance:
     "method": "send_email",
     "description": "Send email to customer@realcorp.io: 'Update'",
     "payload": {"to": "customer@realcorp.io", "subject": "Update", "body": "…"},
-    "category": "manual"
+    "category": "manual",
+    "proposed_by": null
   },
   "final_result": null
 }
 ```
+
+`proposed_by` is `null` here since this example has no auth configured
+(`APM_API_KEYS` unset) — with it set, this is the caller name behind
+whichever key authenticated the `/tools/gmail/send` call, so a human
+reviewing this pending action sees who's asking.
 
 Resolve it with:
 
@@ -188,6 +206,11 @@ Resolve it with:
 POST /tools/actions/{action_id}/decision
 {"approved": true}
 ```
+
+(Also `null` here for the same reason: with auth on, whoever's
+authenticated on *this* call is recorded as `decided_by` on the
+resolved action and its audit event — independently of `proposed_by`,
+since the approver is often a different identity than the proposer.)
 
 On approval, the response's `final_result` is set (`pending_action:
 null`):

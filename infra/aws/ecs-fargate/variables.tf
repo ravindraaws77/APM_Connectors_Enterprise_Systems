@@ -123,3 +123,10 @@ variable "database_url" {
   default     = ""
   sensitive   = true
 }
+
+variable "api_keys" {
+  description = "\"name1:key1,name2:key2\" -- one entry per authenticated caller (an orchestrator service, a script, a human approver), same format as the local APM_API_KEYS env var (see .env.example). Optional: leave empty to keep this API's documented no-auth default (docs/api-contract.md's \"Auth is opt-in\") -- set this before anything beyond a network boundary you already trust can reach service_url. Stored as an SSM SecureString, never a plain env var, and only created/attached at all when set (like database_url above) -- unlike the other secrets, an \"unset\" placeholder value would be a real (if useless) key entry, not an empty value the app already treats as \"no auth configured\"."
+  type        = string
+  default     = ""
+  sensitive   = true
+}

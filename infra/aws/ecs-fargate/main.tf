@@ -287,6 +287,17 @@ resource "aws_ssm_parameter" "database_url" {
   value = var.database_url
 }
 
+# Only created when set, same reasoning as database_url/google_token_json
+# above: an "unset" placeholder here would be a real (if useless) key
+# entry, not the empty value the app already treats as "no auth
+# configured at all" (apm_connectors.config._parse_api_keys).
+resource "aws_ssm_parameter" "api_keys" {
+  count = var.api_keys != "" ? 1 : 0
+  name  = "/${var.app_name}/APM_API_KEYS"
+  type  = "SecureString"
+  value = var.api_keys
+}
+
 locals {
   ssm_secret_arns = concat(
     [
@@ -295,7 +306,8 @@ locals {
       aws_ssm_parameter.jira_api_token.arn,
     ],
     var.google_token_json != "" ? [aws_ssm_parameter.google_token_json[0].arn] : [],
-    var.database_url != "" ? [aws_ssm_parameter.database_url[0].arn] : []
+    var.database_url != "" ? [aws_ssm_parameter.database_url[0].arn] : [],
+    var.api_keys != "" ? [aws_ssm_parameter.api_keys[0].arn] : []
   )
 
   container_secrets = concat(
@@ -305,7 +317,8 @@ locals {
       { name = "JIRA_API_TOKEN", valueFrom = aws_ssm_parameter.jira_api_token.arn },
     ],
     var.google_token_json != "" ? [{ name = "GOOGLE_TOKEN_JSON", valueFrom = aws_ssm_parameter.google_token_json[0].arn }] : [],
-    var.database_url != "" ? [{ name = "DATABASE_URL", valueFrom = aws_ssm_parameter.database_url[0].arn }] : []
+    var.database_url != "" ? [{ name = "DATABASE_URL", valueFrom = aws_ssm_parameter.database_url[0].arn }] : [],
+    var.api_keys != "" ? [{ name = "APM_API_KEYS", valueFrom = aws_ssm_parameter.api_keys[0].arn }] : []
   )
 }
 
@@ -401,6 +414,7 @@ resource "null_resource" "force_new_deployment" {
       var.salesforce_client_secret,
       var.jira_api_token,
       var.database_url,
+      var.api_keys,
     ]))
   }
 

@@ -14,12 +14,14 @@ action_id (writes).
 
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 from langgraph.checkpoint.memory import MemorySaver
 
 from apm_connectors.graph import build_action_graph
 from apm_connectors.api.app import create_app
-from apm_connectors.api.dependencies import get_action_graph, get_tools
+from apm_connectors.api import dependencies as dependencies_module
+from apm_connectors.api.dependencies import get_action_graph, get_tools, require_caller
 from apm_connectors.state.store import StateStore
 from apm_connectors.tools.calendar_tool import CalendarTool
 from apm_connectors.tools.drive_tool import DriveTool
@@ -461,3 +463,99 @@ def test_drive_read_unconfigured_returns_503(tmp_path: Path) -> None:
     response = client.post("/tools/drive/read", json={"process_id": "order-16", "file_id": "f1"})
 
     assert response.status_code == 503
+
+
+# -- Auth (require_caller) ---------------------------------------------------
+# By default (no APM_API_KEYS, and _client doesn't override require_caller)
+# every test above already exercises "auth disabled" -- every route reachable
+# with no Authorization header at all. These tests exercise the gate itself:
+# 401s once configured, and proposed_by/decided_by attribution once a caller
+# is known.
+
+
+def test_routes_reachable_with_no_auth_configured(tmp_path: Path) -> None:
+    """Sanity check for the whole suite above: with no APM_API_KEYS, a
+    request with no Authorization header at all still succeeds -- the
+    documented local-dev default, unchanged by adding auth support.
+    """
+    client, *_ = _client(tmp_path, with_excel=False)
+    response = client.post("/tools/gmail/search", json={"query": "x"})
+    assert response.status_code == 200
+
+
+def test_read_route_401s_with_no_token_once_api_keys_configured(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(dependencies_module, "get_api_keys", lambda: {"sk_abc123": "alice"})
+    client, *_ = _client(tmp_path, with_excel=False)
+
+    response = client.post("/tools/gmail/search", json={"query": "x"})
+
+    assert response.status_code == 401
+
+
+def test_read_route_401s_with_wrong_token_once_api_keys_configured(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(dependencies_module, "get_api_keys", lambda: {"sk_abc123": "alice"})
+    client, *_ = _client(tmp_path, with_excel=False)
+
+    response = client.post(
+        "/tools/gmail/search", json={"query": "x"}, headers={"Authorization": "Bearer wrong-token"}
+    )
+
+    assert response.status_code == 401
+
+
+def test_read_route_succeeds_with_valid_token_once_api_keys_configured(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(dependencies_module, "get_api_keys", lambda: {"sk_abc123": "alice"})
+    message = _raw_message("m1", sender="a@b.com", subject="Hi", snippet="hello", date="2026-09-01")
+    client, *_ = _client(tmp_path, gmail_messages=[message])
+
+    response = client.post(
+        "/tools/gmail/search", json={"query": "x"}, headers={"Authorization": "Bearer sk_abc123"}
+    )
+
+    assert response.status_code == 200
+
+
+def test_processes_routes_gated_but_health_is_not(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(dependencies_module, "get_api_keys", lambda: {"sk_abc123": "alice"})
+    client, *_ = _client(tmp_path)
+
+    assert client.get("/health").status_code == 200
+    assert client.get("/processes").status_code == 401
+    assert client.get("/processes", headers={"Authorization": "Bearer sk_abc123"}).status_code == 200
+
+
+def test_propose_and_decide_attribute_different_authenticated_callers(tmp_path: Path) -> None:
+    """gmail_send records proposed_by from whoever's authenticated on
+    the propose call; decide_action records decided_by from whoever's
+    authenticated on the decision call -- independent identities, since
+    a different person can review a proposal than the one (service or
+    human) that raised it.
+    """
+    client, store, gmail_client, *_ = _client(tmp_path)
+    app = client.app
+    current_caller = {"name": "orchestrator-service"}
+    app.dependency_overrides[require_caller] = lambda: current_caller["name"]
+
+    propose = client.post(
+        "/tools/gmail/send",
+        json={"process_id": "order-20", "to": "customer@realcorp.io", "subject": "Update", "body": "..."},
+    )
+    assert propose.status_code == 200
+    assert propose.json()["pending_action"]["proposed_by"] == "orchestrator-service"
+
+    current_caller["name"] = "alice"
+    decide = client.post("/tools/actions/order-20/decision", json={"approved": True})
+    assert decide.status_code == 200
+    assert decide.json()["final_result"]["executed"] is True
+
+    events = store.list_events("order-20")
+    proposed_event = next(e for e in events if e["event_type"] == "action_proposed")
+    approved_event = next(e for e in events if e["event_type"] == "action_approved")
+    assert proposed_event["caller"] == "orchestrator-service"
+    assert approved_event["caller"] == "alice"
