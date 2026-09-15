@@ -106,22 +106,30 @@ def _propose(
 
 
 @router.post("/gmail/search")
-def gmail_search(body: GmailSearchRequest, tools: dict[str, BaseTool] = Depends(get_tools)) -> list[dict]:
+def gmail_search(
+    body: GmailSearchRequest,
+    tools: dict[str, BaseTool] = Depends(get_tools),
+    caller: str | None = Depends(require_caller),
+) -> list[dict]:
     tool = _tool(tools, "gmail")
     process_id = _resolve_process_id(body.process_id)
     try:
-        results = tool.search_emails(process_id, query=body.query, max_results=body.max_results)
+        results = tool.search_emails(process_id, query=body.query, max_results=body.max_results, caller=caller)
     except Exception as exc:
         raise upstream_error(exc) from exc
     return [r.__dict__ for r in results]
 
 
 @router.post("/gmail/read")
-def gmail_read(body: GmailReadRequest, tools: dict[str, BaseTool] = Depends(get_tools)) -> dict:
+def gmail_read(
+    body: GmailReadRequest,
+    tools: dict[str, BaseTool] = Depends(get_tools),
+    caller: str | None = Depends(require_caller),
+) -> dict:
     tool = _tool(tools, "gmail")
     process_id = _resolve_process_id(body.process_id)
     try:
-        result = tool.read_message(process_id, message_id=body.message_id)
+        result = tool.read_message(process_id, message_id=body.message_id, caller=caller)
     except Exception as exc:
         raise upstream_error(exc) from exc
     return result.__dict__
@@ -145,7 +153,11 @@ def gmail_send(
 
 
 @router.post("/calendar/search")
-def calendar_search(body: CalendarSearchRequest, tools: dict[str, BaseTool] = Depends(get_tools)) -> list[dict]:
+def calendar_search(
+    body: CalendarSearchRequest,
+    tools: dict[str, BaseTool] = Depends(get_tools),
+    caller: str | None = Depends(require_caller),
+) -> list[dict]:
     tool = _tool(tools, "google_calendar")
     process_id = _resolve_process_id(body.process_id)
     try:
@@ -155,6 +167,7 @@ def calendar_search(body: CalendarSearchRequest, tools: dict[str, BaseTool] = De
             time_min=body.time_min,
             time_max=body.time_max,
             max_results=body.max_results,
+            caller=caller,
         )
     except Exception as exc:
         raise upstream_error(exc) from exc
@@ -162,11 +175,15 @@ def calendar_search(body: CalendarSearchRequest, tools: dict[str, BaseTool] = De
 
 
 @router.post("/calendar/read")
-def calendar_read(body: CalendarReadRequest, tools: dict[str, BaseTool] = Depends(get_tools)) -> dict:
+def calendar_read(
+    body: CalendarReadRequest,
+    tools: dict[str, BaseTool] = Depends(get_tools),
+    caller: str | None = Depends(require_caller),
+) -> dict:
     tool = _tool(tools, "google_calendar")
     process_id = _resolve_process_id(body.process_id)
     try:
-        result = tool.read_event(process_id, event_id=body.event_id)
+        result = tool.read_event(process_id, event_id=body.event_id, caller=caller)
     except Exception as exc:
         raise upstream_error(exc) from exc
     return result.__dict__
@@ -196,21 +213,29 @@ def calendar_create_event(
 
 
 @router.post("/excel/worksheets")
-def excel_worksheets(body: ExcelWorksheetsRequest, tools: dict[str, BaseTool] = Depends(get_tools)) -> list[str]:
+def excel_worksheets(
+    body: ExcelWorksheetsRequest,
+    tools: dict[str, BaseTool] = Depends(get_tools),
+    caller: str | None = Depends(require_caller),
+) -> list[str]:
     tool = _tool(tools, "excel_file")
     process_id = _resolve_process_id(body.process_id)
     try:
-        return tool.list_worksheets(process_id)
+        return tool.list_worksheets(process_id, caller=caller)
     except Exception as exc:
         raise upstream_error(exc) from exc
 
 
 @router.post("/excel/read")
-def excel_read(body: ExcelReadRequest, tools: dict[str, BaseTool] = Depends(get_tools)) -> dict:
+def excel_read(
+    body: ExcelReadRequest,
+    tools: dict[str, BaseTool] = Depends(get_tools),
+    caller: str | None = Depends(require_caller),
+) -> dict:
     tool = _tool(tools, "excel_file")
     process_id = _resolve_process_id(body.process_id)
     try:
-        result = tool.read_range(process_id, sheet_name=body.sheet_name, address=body.address)
+        result = tool.read_range(process_id, sheet_name=body.sheet_name, address=body.address, caller=caller)
     except Exception as exc:
         raise upstream_error(exc) from exc
     return result.__dict__
@@ -234,22 +259,32 @@ def excel_write(
 
 
 @router.post("/drive/list")
-def drive_list(body: DriveListRequest, tools: dict[str, BaseTool] = Depends(get_tools)) -> list[dict]:
+def drive_list(
+    body: DriveListRequest,
+    tools: dict[str, BaseTool] = Depends(get_tools),
+    caller: str | None = Depends(require_caller),
+) -> list[dict]:
     tool = _tool(tools, "drive")
     process_id = _resolve_process_id(body.process_id)
     try:
-        results = tool.list_files(process_id, name_contains=body.name_contains, max_results=body.max_results)
+        results = tool.list_files(
+            process_id, name_contains=body.name_contains, max_results=body.max_results, caller=caller
+        )
     except Exception as exc:
         raise upstream_error(exc) from exc
     return [r.__dict__ for r in results]
 
 
 @router.post("/drive/read")
-def drive_read(body: DriveReadRequest, tools: dict[str, BaseTool] = Depends(get_tools)) -> dict:
+def drive_read(
+    body: DriveReadRequest,
+    tools: dict[str, BaseTool] = Depends(get_tools),
+    caller: str | None = Depends(require_caller),
+) -> dict:
     tool = _tool(tools, "drive")
     process_id = _resolve_process_id(body.process_id)
     try:
-        result = tool.read_file(process_id, file_id=body.file_id)
+        result = tool.read_file(process_id, file_id=body.file_id, caller=caller)
     except Exception as exc:
         raise upstream_error(exc) from exc
     return result.__dict__
@@ -287,22 +322,30 @@ def drive_update(
 
 
 @router.post("/salesforce/query")
-def salesforce_query(body: SalesforceQueryRequest, tools: dict[str, BaseTool] = Depends(get_tools)) -> list[dict]:
+def salesforce_query(
+    body: SalesforceQueryRequest,
+    tools: dict[str, BaseTool] = Depends(get_tools),
+    caller: str | None = Depends(require_caller),
+) -> list[dict]:
     tool = _tool(tools, "salesforce")
     process_id = _resolve_process_id(body.process_id)
     try:
-        results = tool.query_records(process_id, soql=body.soql)
+        results = tool.query_records(process_id, soql=body.soql, caller=caller)
     except Exception as exc:
         raise upstream_error(exc) from exc
     return [r.__dict__ for r in results]
 
 
 @router.post("/salesforce/read")
-def salesforce_read(body: SalesforceReadRequest, tools: dict[str, BaseTool] = Depends(get_tools)) -> dict:
+def salesforce_read(
+    body: SalesforceReadRequest,
+    tools: dict[str, BaseTool] = Depends(get_tools),
+    caller: str | None = Depends(require_caller),
+) -> dict:
     tool = _tool(tools, "salesforce")
     process_id = _resolve_process_id(body.process_id)
     try:
-        result = tool.get_record(process_id, object_name=body.object_name, record_id=body.record_id)
+        result = tool.get_record(process_id, object_name=body.object_name, record_id=body.record_id, caller=caller)
     except Exception as exc:
         raise upstream_error(exc) from exc
     return result.__dict__
@@ -340,22 +383,30 @@ def salesforce_update(
 
 
 @router.post("/jira/search")
-def jira_search(body: JiraSearchRequest, tools: dict[str, BaseTool] = Depends(get_tools)) -> list[dict]:
+def jira_search(
+    body: JiraSearchRequest,
+    tools: dict[str, BaseTool] = Depends(get_tools),
+    caller: str | None = Depends(require_caller),
+) -> list[dict]:
     tool = _tool(tools, "jira")
     process_id = _resolve_process_id(body.process_id)
     try:
-        results = tool.search_issues(process_id, jql=body.jql, max_results=body.max_results)
+        results = tool.search_issues(process_id, jql=body.jql, max_results=body.max_results, caller=caller)
     except Exception as exc:
         raise upstream_error(exc) from exc
     return [r.__dict__ for r in results]
 
 
 @router.post("/jira/read")
-def jira_read(body: JiraReadRequest, tools: dict[str, BaseTool] = Depends(get_tools)) -> dict:
+def jira_read(
+    body: JiraReadRequest,
+    tools: dict[str, BaseTool] = Depends(get_tools),
+    caller: str | None = Depends(require_caller),
+) -> dict:
     tool = _tool(tools, "jira")
     process_id = _resolve_process_id(body.process_id)
     try:
-        result = tool.get_issue(process_id, issue_key=body.issue_key)
+        result = tool.get_issue(process_id, issue_key=body.issue_key, caller=caller)
     except Exception as exc:
         raise upstream_error(exc) from exc
     return result.__dict__

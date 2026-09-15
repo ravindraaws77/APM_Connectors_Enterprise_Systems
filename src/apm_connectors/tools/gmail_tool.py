@@ -92,7 +92,7 @@ class GmailTool(BaseTool):
             return False
 
     def search_emails(
-        self, process_id: str, query: str, max_results: int = 10
+        self, process_id: str, query: str, max_results: int = 10, caller: str | None = None
     ) -> list[EmailSummary]:
         """Search the mailbox using Gmail's query syntax (e.g.
         `"from:customer@example.com newer_than:14d"`) and return normalized
@@ -105,16 +105,18 @@ class GmailTool(BaseTool):
             "read",
             f"Searched Gmail for '{query}', found {len(summaries)} message(s)",
             {"query": query, "count": len(summaries)},
+            caller=caller,
         )
         return summaries
 
-    def read_message(self, process_id: str, message_id: str) -> EmailSummary:
+    def read_message(self, process_id: str, message_id: str, caller: str | None = None) -> EmailSummary:
         summary = self._to_summary(self._client.get_message(message_id))
         self._log(
             process_id,
             "read",
             f"Read Gmail message '{summary.subject}' from {summary.sender}",
             {"message_id": message_id},
+            caller=caller,
         )
         return summary
 

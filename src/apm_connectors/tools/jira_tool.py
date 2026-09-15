@@ -70,7 +70,9 @@ class JiraTool(BaseTool):
         except Exception:
             return False
 
-    def search_issues(self, process_id: str, jql: str, max_results: int = 50) -> list[JiraIssue]:
+    def search_issues(
+        self, process_id: str, jql: str, max_results: int = 50, caller: str | None = None
+    ) -> list[JiraIssue]:
         """Run a read-only JQL search (e.g.
         `"project = OPS AND status = 'In Progress' ORDER BY updated DESC"`)
         and return normalized issues. `max_results` caps the page size --
@@ -84,16 +86,18 @@ class JiraTool(BaseTool):
             "read",
             f"Searched Jira ('{jql}'), found {len(issues)} issue(s)",
             {"jql": jql, "count": len(issues)},
+            caller=caller,
         )
         return issues
 
-    def get_issue(self, process_id: str, issue_key: str) -> JiraIssue:
+    def get_issue(self, process_id: str, issue_key: str, caller: str | None = None) -> JiraIssue:
         issue = self._to_issue(self._client.get_issue(issue_key))
         self._log(
             process_id,
             "read",
             f"Read Jira issue {issue_key}",
             {"issue_key": issue_key},
+            caller=caller,
         )
         return issue
 

@@ -72,6 +72,7 @@ class CalendarTool(BaseTool):
         time_min: str | None = None,
         time_max: str | None = None,
         max_results: int = 10,
+        caller: str | None = None,
     ) -> list[EventSummary]:
         """List/search events, optionally filtered by a free-text query
         and/or an RFC3339 time window (e.g. `time_min="2026-09-01T00:00:00Z"`).
@@ -85,16 +86,18 @@ class CalendarTool(BaseTool):
             "read",
             f"Searched Calendar (query={query!r}), found {len(summaries)} event(s)",
             {"query": query, "time_min": time_min, "time_max": time_max, "count": len(summaries)},
+            caller=caller,
         )
         return summaries
 
-    def read_event(self, process_id: str, event_id: str) -> EventSummary:
+    def read_event(self, process_id: str, event_id: str, caller: str | None = None) -> EventSummary:
         summary = self._to_summary(self._client.get_event(event_id))
         self._log(
             process_id,
             "read",
             f"Read Calendar event '{summary.title}'",
             {"event_id": event_id},
+            caller=caller,
         )
         return summary
 

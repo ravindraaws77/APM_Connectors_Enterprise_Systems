@@ -68,8 +68,10 @@ Wherever `uvicorn apm_connectors.api.app:app` is running, e.g.
   the audit trail: a write route records it as `proposed_by`, and
   `POST /tools/actions/{action_id}/decision` records it as
   `decided_by` — two independent identities, since the human deciding
-  a write is often not whatever proposed it. Both are `null` with auth
-  off. See `docs/security-guardrails.md`.
+  a write is often not whatever proposed it. A read route (`gmail_search`,
+  `salesforce_query`, etc.) records it too, as the audit event's
+  `caller` field. All of these are `null` with auth off. See
+  `docs/security-guardrails.md`.
 
 ## Gmail
 

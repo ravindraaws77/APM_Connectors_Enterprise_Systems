@@ -98,7 +98,7 @@ class ExcelFileTool(BaseTool):
         except Exception:
             return False
 
-    def list_worksheets(self, process_id: str) -> list[str]:
+    def list_worksheets(self, process_id: str, caller: str | None = None) -> list[str]:
         workbook = self._load_workbook(data_only=True)
         names = list(workbook.sheetnames)
         self._log(
@@ -106,11 +106,16 @@ class ExcelFileTool(BaseTool):
             "read",
             f"Listed {len(names)} worksheet(s) from {self._source.describe()}",
             {"worksheets": names, "source": self._source.describe()},
+            caller=caller,
         )
         return names
 
     def read_range(
-        self, process_id: str, sheet_name: str | None = None, address: str | None = None
+        self,
+        process_id: str,
+        sheet_name: str | None = None,
+        address: str | None = None,
+        caller: str | None = None,
     ) -> RangeData:
         """Read a cell range and return its values as a list of rows.
 
@@ -138,6 +143,7 @@ class ExcelFileTool(BaseTool):
                 "row_count": len(values),
                 "source": self._source.describe(),
             },
+            caller=caller,
         )
         return data
 

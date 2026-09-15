@@ -87,6 +87,19 @@ def test_get_record(tmp_path: Path) -> None:
     assert any(e["event_type"] == "read" and e["details"]["record_id"] == "003xyz" for e in events)
 
 
+def test_query_records_and_get_record_log_caller(tmp_path: Path) -> None:
+    store = StateStore(tmp_path / "state.json")
+    client = FakeSalesforceClient([_raw_record("003xyz", "Contact", LastName="Doe")])
+    tool = SalesforceTool(store, client)
+
+    tool.query_records("order-1", "SELECT Id FROM Contact", caller="alice")
+    tool.get_record("order-1", "Contact", "003xyz", caller="alice")
+
+    events = [e for e in store.list_events("order-1") if e["event_type"] == "read"]
+    assert len(events) == 2
+    assert all(e["caller"] == "alice" for e in events)
+
+
 def test_health_check_true(tmp_path: Path) -> None:
     store = StateStore(tmp_path / "state.json")
     tool = SalesforceTool(store, FakeSalesforceClient([]))
