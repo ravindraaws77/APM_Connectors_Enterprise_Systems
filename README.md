@@ -54,6 +54,10 @@ See `docs/running-locally.md` for the full walkthrough.
 - `docs/google-account-setup.md` — pointing the Gmail/Calendar
   connectors at a different Google account, locally or on the AWS
   deployment.
+- `docs/roadmap.md` — the plan for the layer that calls into this API
+  next: a separate repo for a multi-agent supervisor + visual/voice
+  avatar interface, plus the production-scalability and security
+  hardening that goes with it.
 
 Durable state (swapping the default file-backed/in-memory status,
 audit log, and paused-approval storage for Postgres) is covered inline
