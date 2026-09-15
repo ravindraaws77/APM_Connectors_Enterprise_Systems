@@ -83,6 +83,14 @@ production, close the gap `docs/api-contract.md` already documents:
 - Extend the audit log (`StateStoreProtocol`) to record *which*
   authenticated caller proposed an action and *which* authenticated
   human decided it — today it logs the event, not a verified identity.
+- Add a general **Drive documents connector** (`drive_tool.py`):
+  list/search files, download/read a file, upload/update a file —
+  following the `tool-integration` skill checklist (`BaseTool`
+  interface, `dry_run`, approval-gated writes, capability-map entry).
+  Today's Google Drive support (`excel_file_tool.py`) only reads/writes
+  cell ranges in one `.xlsx` workbook; it can't store or fetch arbitrary
+  documents (contracts, POs, signed agreements) — every business agent
+  will want that, not just the Order-Renewal pilot.
 - Everything below assumes this is done first.
 
 ## Phase 1 — multi-agent core (new repo)
@@ -101,6 +109,39 @@ production, close the gap `docs/api-contract.md` already documents:
   with its own MCP server.
 - Shared task/conversation state (Postgres) so the Supervisor can track
   multi-step plans across agents.
+
+### Pilot: Order-Renewal agent
+
+Chosen as the first business agent — generic enough in shape (detect →
+verify → act → record) to be the template every later business agent
+copies. Its toolbelt, using this repo's actual connector methods:
+
+| Step | Tool | Calls | Gate |
+|---|---|---|---|
+| Detect a renewal/complaint/escalation signal | Gmail | `search_emails`, `read_message` | read |
+| Look up the account/opportunity | Salesforce | `query_records`, `get_record` | read |
+| Check for blocking tickets | Jira | `search_issues`, `get_issue` | read |
+| Pull the existing contract/agreement | Drive *(new connector, see Phase 0)* | `list_files`/`search_files`, `read_file` | read |
+| Propose a renewal call | Calendar | `create_event` | **approval** |
+| Send the renewal notice/confirmation | Gmail | `send_email` | **approval** |
+| Store the finalized renewal document | Drive *(new)* | `upload_file`/`update_file` | **approval** |
+| Route follow-up work to a team/partner | Jira | `create_issue` (targeted at that team/partner's actual Jira project/component — "work areas" means a Jira project, not an ad hoc issue) | **approval** |
+| Update the record of truth | Salesforce | `update_record` (stage, close date) | **approval** |
+| Reporting (separate cadence, not the live workflow) | Excel | `write_range`, generated *from* Salesforce state on a schedule | **approval**, lower-stakes than the rest |
+
+**Salesforce is the system of record for order/renewal state, not
+Excel.** Excel's `write_range` is a single shared workbook with no
+row-level concurrency control (capability-map: "one workbook per
+running server") — fine for a generated report, unsafe as a second
+place live order state gets written during the workflow. Two systems
+both claiming to hold the live record is how they silently drift; this
+repo's approval queue only catches conflicting writes *within* one
+system, not across two.
+
+The policy that makes this "a renewal" (which Gmail/SOQL/JQL filters,
+SLA windows, what counts as a blocker) should live as config the agent
+reads, not code — so the next business agent (Churn Prevention, say) is
+a new policy + a different toolbelt subset, not new plumbing.
 
 ## Phase 2 — avatar interface (new repo)
 
