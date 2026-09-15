@@ -83,13 +83,15 @@ production, close the gap `docs/api-contract.md` already documents:
 - Extend the audit log (`StateStoreProtocol`) to record *which*
   authenticated caller proposed an action and *which* authenticated
   human decided it — today it logs the event, not a verified identity.
-- Add a general **Drive documents connector** (`drive_tool.py`):
-  list/search files, download/read a file, upload/update a file —
-  following the `tool-integration` skill checklist (`BaseTool`
-  interface, `dry_run`, approval-gated writes, capability-map entry).
-  Today's Google Drive support (`excel_file_tool.py`) only reads/writes
-  cell ranges in one `.xlsx` workbook; it can't store or fetch arbitrary
-  documents (contracts, POs, signed agreements) — every business agent
+- **Done:** a general Drive documents connector (`drive_tool.py`) —
+  list/search files, download/read a file, upload/update a file,
+  scoped to one configured folder (`APM_DRIVE_FOLDER_ID`) — following
+  the `tool-integration` skill checklist (`BaseTool` interface,
+  `dry_run`, approval-gated writes, capability-map entry). The
+  Excel-on-Drive connector (`excel_file_tool.py`) still only reads/writes
+  cell ranges in one `.xlsx` workbook; this is the separate connector
+  for arbitrary documents (contracts, POs, signed agreements) — every
+  business agent
   will want that, not just the Order-Renewal pilot.
 - Everything below assumes this is done first.
 

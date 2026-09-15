@@ -15,7 +15,8 @@ running elsewhere:
     APM_CONNECTORS_BASE_URL=http://127.0.0.1:8000 apm-connectors-mcp
 
 Every write tool (gmail_send, calendar_create_event, excel_write,
-salesforce_create, salesforce_update, jira_create, jira_update) mirrors
+drive_upload, drive_update, salesforce_create, salesforce_update,
+jira_create, jira_update) mirrors
 the REST API exactly: it does not execute anything -- it
 returns a paused action_id, and the agent must call
 decide_action(action_id, approved=True) to actually run it. That gate
@@ -190,6 +191,58 @@ def build_server(client: ConnectorClient, name: str = "apm-connectors") -> MCPSe
             {"sheet_name": sheet_name, "address": address, "values": values, "process_id": process_id},
         )
 
+    # -- Drive (documents, distinct from excel_* -- a whole file, not a --
+    # -- cell range, scoped to whichever folder the server is configured --
+    # -- for) -----------------------------------------------------------
+
+    @mcp.tool()
+    async def drive_list(
+        name_contains: str | None = None, max_results: int = 20, process_id: str | None = None
+    ) -> list[dict]:
+        """List files in the Drive folder this server is configured
+        for (APM_DRIVE_FOLDER_ID), optionally filtered by a substring
+        of the file name. Read-only: executes immediately.
+        """
+        return await _call(
+            "/tools/drive/list",
+            {"name_contains": name_contains, "max_results": max_results, "process_id": process_id},
+        )
+
+    @mcp.tool()
+    async def drive_read(file_id: str, process_id: str | None = None) -> dict[str, Any]:
+        """Read one Drive file's contents (from drive_list's results).
+        Returns the file base64-encoded in content_base64, along with
+        its name/mime_type/size. Read-only: executes immediately.
+        Refuses if the file isn't inside the configured folder.
+        """
+        return await _call("/tools/drive/read", {"file_id": file_id, "process_id": process_id})
+
+    @mcp.tool()
+    async def drive_upload(
+        name: str, content_base64: str, mime_type: str, process_id: str | None = None
+    ) -> dict[str, Any]:
+        """Propose uploading a new file (base64-encoded content_base64)
+        into the configured Drive folder. This does NOT upload anything
+        -- it pauses for human approval and returns action_id; call
+        decide_action to resolve it.
+        """
+        return await _call(
+            "/tools/drive/upload",
+            {"name": name, "content_base64": content_base64, "mime_type": mime_type, "process_id": process_id},
+        )
+
+    @mcp.tool()
+    async def drive_update(file_id: str, content_base64: str, process_id: str | None = None) -> dict[str, Any]:
+        """Propose replacing an existing Drive file's contents with new
+        base64-encoded bytes (file_id from drive_list's results). This
+        does NOT change anything -- it pauses for approval and returns
+        action_id; call decide_action to resolve it. Refuses if the
+        file isn't inside the configured folder.
+        """
+        return await _call(
+            "/tools/drive/update", {"file_id": file_id, "content_base64": content_base64, "process_id": process_id}
+        )
+
     # -- Salesforce ---------------------------------------------------------
 
     @mcp.tool()
@@ -289,8 +342,9 @@ def build_server(client: ConnectorClient, name: str = "apm-connectors") -> MCPSe
     @mcp.tool()
     async def decide_action(action_id: str, approved: bool) -> dict[str, Any]:
         """Approve or reject a pending write proposed by gmail_send,
-        calendar_create_event, excel_write, salesforce_create/update, or
-        jira_create/update (its action_id from that call's response).
+        calendar_create_event, excel_write, drive_upload/update,
+        salesforce_create/update, or jira_create/update (its action_id
+        from that call's response).
         Nothing in the real system happens until this is called with
         approved=true; approved=false discards it -- nothing is
         sent/created/written either way.

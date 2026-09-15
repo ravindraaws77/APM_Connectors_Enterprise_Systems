@@ -22,11 +22,13 @@ from apm_connectors.api.app import create_app
 from apm_connectors.api.dependencies import get_action_graph, get_tools
 from apm_connectors.state.store import StateStore
 from apm_connectors.tools.calendar_tool import CalendarTool
+from apm_connectors.tools.drive_tool import DriveTool
 from apm_connectors.tools.excel_file_tool import ExcelFileTool
 from apm_connectors.tools.gmail_tool import GmailTool
 from apm_connectors.tools.jira_tool import JiraTool
 from apm_connectors.tools.salesforce_tool import SalesforceTool
 from tests.test_calendar_tool import FakeCalendarClient
+from tests.test_drive_tool import FOLDER_ID, FakeDriveClient
 from tests.test_excel_file_tool import FakeWorkbookSource, _sample_workbook_bytes
 from tests.test_gmail_tool import FakeGmailClient, _raw_message
 from tests.test_jira_tool import FakeJiraClient, _raw_issue
@@ -369,3 +371,93 @@ def test_jira_update_gated(tmp_path: Path) -> None:
     assert decide.status_code == 200
     assert decide.json()["final_result"] == {"executed": False, "reason": "rejected"}
     assert jira_client.updated == []
+
+
+# -- Drive documents --------------------------------------------------------
+# A dedicated helper (not _client above) since Drive is a single optional
+# tool, not part of the fixed 7-tuple every other test unpacks.
+
+
+def _drive_client(tmp_path: Path, with_drive: bool = True):
+    store = StateStore(tmp_path / "state.json")
+    tools: dict = {}
+    drive_client = None
+    if with_drive:
+        drive_client = FakeDriveClient()
+        drive_client.add_file("f1", "Contract.pdf", "application/pdf", [FOLDER_ID], b"pdf-bytes")
+        tools["drive"] = DriveTool(store, drive_client, folder_id=FOLDER_ID)
+    action_graph = build_action_graph(tools, store, checkpointer=MemorySaver())
+
+    app = create_app()
+    app.dependency_overrides[get_tools] = lambda: tools
+    app.dependency_overrides[get_action_graph] = lambda: action_graph
+    return TestClient(app), store, drive_client
+
+
+def test_drive_list_returns_data_immediately(tmp_path: Path) -> None:
+    client, store, _ = _drive_client(tmp_path)
+
+    response = client.post("/tools/drive/list", json={"process_id": "order-13"})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert len(body) == 1
+    assert body[0]["name"] == "Contract.pdf"
+    assert any(e["event_type"] == "read" for e in store.list_events("order-13"))
+
+
+def test_drive_read_returns_base64_content(tmp_path: Path) -> None:
+    client, *_ = _drive_client(tmp_path)
+
+    response = client.post("/tools/drive/read", json={"process_id": "order-13", "file_id": "f1"})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["name"] == "Contract.pdf"
+    assert body["size"] == len(b"pdf-bytes")
+
+
+def test_drive_upload_gated(tmp_path: Path) -> None:
+    client, store, drive_client = _drive_client(tmp_path)
+
+    propose = client.post(
+        "/tools/drive/upload",
+        json={
+            "process_id": "order-14",
+            "name": "Renewal.pdf",
+            "content_base64": "bmV3LWRvYw==",
+            "mime_type": "application/pdf",
+        },
+    )
+    assert propose.status_code == 200
+    assert propose.json()["pending_action"]["tool"] == "drive"
+    assert drive_client.upload_count == 0
+
+    decide = client.post("/tools/actions/order-14/decision", json={"approved": True})
+    assert decide.status_code == 200
+    assert decide.json()["final_result"]["executed"] is True
+    assert drive_client.upload_count == 1
+
+
+def test_drive_update_gated_and_rejected_does_not_execute(tmp_path: Path) -> None:
+    client, store, drive_client = _drive_client(tmp_path)
+
+    propose = client.post(
+        "/tools/drive/update",
+        json={"process_id": "order-15", "file_id": "f1", "content_base64": "bmV3LWJ5dGVz"},
+    )
+    assert propose.status_code == 200
+    assert drive_client.update_count == 0
+
+    decide = client.post("/tools/actions/order-15/decision", json={"approved": False})
+    assert decide.status_code == 200
+    assert decide.json()["final_result"] == {"executed": False, "reason": "rejected"}
+    assert drive_client.update_count == 0
+
+
+def test_drive_read_unconfigured_returns_503(tmp_path: Path) -> None:
+    client, *_ = _drive_client(tmp_path, with_drive=False)
+
+    response = client.post("/tools/drive/read", json={"process_id": "order-16", "file_id": "f1"})
+
+    assert response.status_code == 503

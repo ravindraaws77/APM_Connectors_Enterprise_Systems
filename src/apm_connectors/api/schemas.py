@@ -102,6 +102,30 @@ class ExcelWriteRequest(BaseModel):
     values: list[list[Any]]
 
 
+class DriveListRequest(BaseModel):
+    process_id: str | None = None
+    name_contains: str | None = None
+    max_results: int = 20
+
+
+class DriveReadRequest(BaseModel):
+    process_id: str | None = None
+    file_id: str
+
+
+class DriveUploadRequest(BaseModel):
+    process_id: str | None = None
+    name: str
+    content_base64: str
+    mime_type: str
+
+
+class DriveUpdateRequest(BaseModel):
+    process_id: str | None = None
+    file_id: str
+    content_base64: str
+
+
 class SalesforceQueryRequest(BaseModel):
     process_id: str | None = None
     soql: str

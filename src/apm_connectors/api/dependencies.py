@@ -22,6 +22,7 @@ from apm_connectors.config import load_settings
 from apm_connectors.graph import build_action_graph
 from apm_connectors.state.store import StateStore, StateStoreProtocol
 from apm_connectors.tools.base import BaseTool
+from apm_connectors.tools.drive_tool import build_configured_drive_tool
 from apm_connectors.tools.excel_file_tool import build_configured_excel_tool
 from apm_connectors.tools.google_auth import build_gmail_and_calendar_tools
 from apm_connectors.tools.jira_tool import build_configured_jira_tool
@@ -96,6 +97,10 @@ def get_tools() -> dict[str, BaseTool]:
     excel_tool = build_configured_excel_tool(state, settings)
     if excel_tool is not None:
         tools["excel_file"] = excel_tool
+
+    drive_tool = build_configured_drive_tool(state, settings)
+    if drive_tool is not None:
+        tools["drive"] = drive_tool
 
     salesforce_tool = build_configured_salesforce_tool(state, settings)
     if salesforce_tool is not None:

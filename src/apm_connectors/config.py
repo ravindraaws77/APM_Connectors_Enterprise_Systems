@@ -48,6 +48,10 @@ class Settings:
     jira_base_url: str | None = None
     jira_email: str | None = None
     jira_api_token: str | None = None
+    # Reuses GOOGLE_CLIENT_ID/SECRET (or GOOGLE_TOKEN_JSON) above -- see
+    # tools/drive_tool.py's module docstring for why this is the only
+    # setting needed to enable it (no separate "enabled" flag).
+    drive_folder_id: str | None = None
     # Durable state, opt-in: when set, apm_connectors.api.dependencies
     # swaps the default file-backed StateStore + in-memory LangGraph
     # checkpointer for Postgres-backed ones (state/postgres_store.py) --
@@ -72,5 +76,6 @@ def load_settings() -> Settings:
         jira_base_url=os.environ.get("JIRA_BASE_URL"),
         jira_email=os.environ.get("JIRA_EMAIL"),
         jira_api_token=os.environ.get("JIRA_API_TOKEN"),
+        drive_folder_id=os.environ.get("APM_DRIVE_FOLDER_ID"),
         database_url=os.environ.get("DATABASE_URL"),
     )

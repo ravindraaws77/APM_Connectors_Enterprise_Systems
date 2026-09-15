@@ -35,6 +35,10 @@ from apm_connectors.api.schemas import (
     CalendarReadRequest,
     CalendarSearchRequest,
     DecisionRequest,
+    DriveListRequest,
+    DriveReadRequest,
+    DriveUpdateRequest,
+    DriveUploadRequest,
     ExcelReadRequest,
     ExcelWorksheetsRequest,
     ExcelWriteRequest,
@@ -203,6 +207,57 @@ def excel_write(
     description = f"Write {len(body.values)} row(s) to {body.sheet_name}!{body.address}"
     payload = {"sheet_name": body.sheet_name, "address": body.address, "values": body.values}
     return _propose(graph, action_id, "excel_file", "write_range", description, payload)
+
+
+# -- Drive (documents) ---------------------------------------------------
+
+
+@router.post("/drive/list")
+def drive_list(body: DriveListRequest, tools: dict[str, BaseTool] = Depends(get_tools)) -> list[dict]:
+    tool = _tool(tools, "drive")
+    process_id = _resolve_process_id(body.process_id)
+    try:
+        results = tool.list_files(process_id, name_contains=body.name_contains, max_results=body.max_results)
+    except Exception as exc:
+        raise upstream_error(exc) from exc
+    return [r.__dict__ for r in results]
+
+
+@router.post("/drive/read")
+def drive_read(body: DriveReadRequest, tools: dict[str, BaseTool] = Depends(get_tools)) -> dict:
+    tool = _tool(tools, "drive")
+    process_id = _resolve_process_id(body.process_id)
+    try:
+        result = tool.read_file(process_id, file_id=body.file_id)
+    except Exception as exc:
+        raise upstream_error(exc) from exc
+    return result.__dict__
+
+
+@router.post("/drive/upload", response_model=RunOutcomeResponse)
+def drive_upload(
+    body: DriveUploadRequest,
+    tools: dict[str, BaseTool] = Depends(get_tools),
+    graph=Depends(get_action_graph),
+) -> RunOutcomeResponse:
+    _tool(tools, "drive")  # fail fast, before recording a pending action doomed to fail on approval
+    action_id = _resolve_process_id(body.process_id)
+    description = f"Upload document '{body.name}' ({body.mime_type}) to Drive"
+    payload = {"name": body.name, "content_base64": body.content_base64, "mime_type": body.mime_type}
+    return _propose(graph, action_id, "drive", "upload_file", description, payload)
+
+
+@router.post("/drive/update", response_model=RunOutcomeResponse)
+def drive_update(
+    body: DriveUpdateRequest,
+    tools: dict[str, BaseTool] = Depends(get_tools),
+    graph=Depends(get_action_graph),
+) -> RunOutcomeResponse:
+    _tool(tools, "drive")
+    action_id = _resolve_process_id(body.process_id)
+    description = f"Replace contents of Drive file {body.file_id}"
+    payload = {"file_id": body.file_id, "content_base64": body.content_base64}
+    return _propose(graph, action_id, "drive", "update_file", description, payload)
 
 
 # -- Salesforce ---------------------------------------------------------

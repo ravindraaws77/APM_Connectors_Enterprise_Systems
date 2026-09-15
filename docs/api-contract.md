@@ -97,6 +97,28 @@ is set, every Excel route 503s. `read`'s `sheet_name`/`address` default
 to the workbook's first worksheet and its whole used range when
 omitted — pass them explicitly for anything more specific.
 
+## Drive documents
+
+| Route | Kind | Request body | Returns |
+|---|---|---|---|
+| `POST /tools/drive/list` | read | `{process_id?, name_contains?, max_results?: 20}` | `[{file_id, name, mime_type, modified_time, web_view_link}, ...]` |
+| `POST /tools/drive/read` | read | `{process_id?, file_id}` | `{file_id, name, mime_type, size, content_base64}` |
+| `POST /tools/drive/upload` | **write** | `{process_id?, name, content_base64, mime_type}` | `RunOutcomeResponse` |
+| `POST /tools/drive/update` | **write** | `{process_id?, file_id, content_base64}` | `RunOutcomeResponse` |
+
+Distinct from Excel above: this is for arbitrary documents (contracts,
+POs, signed agreements), not `.xlsx` cell ranges. Every operation is
+scoped to one Drive folder (`APM_DRIVE_FOLDER_ID` — see
+`docs/capability-map.md`); if unset, every Drive route 503s. `read`
+502s immediately (naming the file) if `file_id` isn't actually inside
+that folder — this connector refuses to touch anything outside it,
+regardless of what the broader OAuth scope could otherwise reach. For
+`update`, the same check runs against the real file only once a human
+approves the write, not on the initial propose call — the dry-run
+proposal always succeeds (it just echoes `file_id` back); an
+out-of-folder `file_id` surfaces as a 502 on the
+`POST /tools/actions/{action_id}/decision` call instead.
+
 ## Salesforce
 
 | Route | Kind | Request body | Returns |
