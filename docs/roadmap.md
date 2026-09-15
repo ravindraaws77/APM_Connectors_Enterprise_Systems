@@ -20,18 +20,17 @@ Supervisor agent. They belong in one new repo (call it
 flowchart LR
     subgraph repoA["New repo: apm-orchestrator"]
         avatar["Avatar / voice / chat UI"]
-        supervisor["Supervisor agent"]
-        emailAgent["Email agent"]
-        calAgent["Calendar agent"]
-        crmAgent["CRM agent (Salesforce)"]
-        jiraAgent["Jira agent"]
+        supervisor["Supervisor agent<br/>(business-intent routing)"]
+        renewal["Order-Renewal agent"]
+        churn["Churn-Prevention agent"]
+        onboarding["Customer-Onboarding agent"]
         avatar --> supervisor
-        supervisor --> emailAgent & calAgent & crmAgent & jiraAgent
+        supervisor --> renewal & churn & onboarding
     end
     human["Human approver"]
     repoB["This repo: apm_connectors\n/tools/* API + approval gate"]
 
-    emailAgent & calAgent & crmAgent & jiraAgent -- "HTTP / MCP" --> repoB
+    renewal & churn & onboarding -- "HTTP / MCP\n(each agent's own toolbelt subset)" --> repoB
     avatar -. "surfaces pending_action to" .-> human
     human -- "approve/reject (authenticated)" --> repoB
 ```
@@ -40,6 +39,31 @@ Splitting further later (e.g. avatar streaming media as its own
 service) is easy once there's a reason — a shared media/SFU workload
 that needs to scale independently of agent logic is the likely trigger.
 Don't pre-split before that need shows up.
+
+**Agents are decomposed by business process, not by connector.** The
+tempting default is one agent per external system (an "Email agent," a
+"Calendar agent"), mirroring this repo's own per-connector modules. Don't
+do that — it just relocates the same tool-plumbing without adding
+business logic, and pushes all *actual* workflow knowledge (SLA windows,
+what blocks a renewal, escalation rules) up into the Supervisor, which
+then has to know every business process anyway. Instead, each specialized
+agent owns one end-to-end business capability (Order Renewal, Churn
+Prevention, Customer Onboarding, ...) and is handed whatever subset of
+this repo's connector tools that process actually needs — an
+Order-Renewal agent's toolbelt might be `salesforce.query`,
+`salesforce.update`, `jira.search` (checking for blocking tickets),
+`calendar.create_event`, and `gmail.send`, all called from inside that
+one agent's own run, not fanned out across four separate agent hops.
+This also makes least-privilege scoping map to something real: "the
+Renewals agent can touch Opportunity records and send renewal mail," not
+"this agent can call the Salesforce API." New business capabilities get
+onboarded as new agents over time — a product roadmap, not a connector
+roadmap. The one thing to watch: two business agents can propose
+conflicting writes to the same underlying record (e.g. Renewals and a
+Support agent both touching the same Opportunity) — this repo's single
+approval queue and audit log already catch that, since every proposed
+write from any business agent lands there regardless of which agent
+proposed it.
 
 **The approval boundary never moves.** The avatar/Supervisor can
 *propose* and can *display* a pending action to a human, but the
@@ -63,11 +87,14 @@ production, close the gap `docs/api-contract.md` already documents:
 
 ## Phase 1 — multi-agent core (new repo)
 
-- Supervisor agent (Claude Agent SDK) that does intent routing and
-  task decomposition.
-- Specialized agents, each scoped to one connector domain only (least
-  privilege at the agent level, not just OAuth scope): Email, Calendar,
-  CRM (Salesforce), Jira, Reporting/Excel.
+- Supervisor agent (Claude Agent SDK) that does business-intent routing
+  (e.g. "this is a renewal" / "this is a churn signal"), not
+  connector routing.
+- Specialized agents, one per business process/capability (e.g. Order
+  Renewal, Churn Prevention, Customer Onboarding — start with whichever
+  one process is the highest-value pilot), each holding a scoped subset
+  of this repo's connector tools as its own toolbelt. See "Agents are
+  decomposed by business process, not by connector" above.
 - Each specialized agent talks to this repo only via
   `apm_connectors_mcp` (or direct HTTP against `/tools/*`) — never
   imports this repo's internals, same boundary this repo already keeps
