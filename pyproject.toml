@@ -12,13 +12,10 @@ dependencies = [
     "requests>=2.31",
     # The small propose/approval/execute LangGraph layer that gates
     # every write (apm_connectors.graph) -- no Anthropic/Claude
-    # dependency anywhere in this package.
+    # dependency anywhere in this package. Its checkpointer (the `postgres`
+    # extra below) is required to actually run the API server -- see
+    # api/dependencies.py's get_action_graph.
     "langgraph>=0.2",
-    # The default (no DATABASE_URL) checkpointer for that graph: a local
-    # SQLite file next to the file-backed StateStore's own JSON file, so
-    # a paused approval survives a process restart at zero extra infra --
-    # see api/dependencies.py's get_action_graph.
-    "langgraph-checkpoint-sqlite>=2.0",
     # FastAPI backend.
     "fastapi>=0.110",
     "uvicorn>=0.29",
@@ -33,11 +30,14 @@ connectors = ["pytest>=8.0", "httpx>=0.27"]
 # Talks to that API purely over HTTP (never imports apm_connectors.tools
 # /graph directly) -- see src/apm_connectors_mcp/server.py's docstring.
 mcp = ["mcp>=2.0", "httpx>=0.27"]
-# Durable state: swaps the default file-backed StateStore and SQLite-
-# backed LangGraph checkpointer for Postgres-backed ones when
-# DATABASE_URL is set (src/apm_connectors/state/postgres_store.py,
-# src/apm_connectors/api/dependencies.py). Optional and imported lazily
-# so the zero-infra local/file-backed default needs none of this.
+# Required to actually run the API server: its status/audit StateStore
+# and its LangGraph action-graph checkpointer are both Postgres-only, no
+# file-backed/in-memory fallback (src/apm_connectors/state/postgres_store.py,
+# src/apm_connectors/api/dependencies.py). A separate extra (not a base
+# dependency), like apm_orchestrator's own `postgres` extra, so installing
+# this package doesn't force psycopg on consumers that never run the
+# server themselves (e.g. apm_connectors_mcp, which only talks HTTP to an
+# already-running one) -- imported lazily by dependencies.py either way.
 postgres = ["psycopg[binary,pool]>=3.2", "langgraph-checkpoint-postgres>=2.0"]
 
 [project.scripts]

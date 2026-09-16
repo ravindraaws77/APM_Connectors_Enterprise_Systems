@@ -30,10 +30,15 @@ reasoning/orchestration layer calling this API, not in this repo.
   `docs/capability-map.md`.
 - Every action (read, proposed write, approval, rejection, execution,
   failure) is recorded via the state store (`src/apm_connectors/state/
-  store.py`'s `StateStoreProtocol`) — file-backed by default,
-  Postgres-backed (`state/postgres_store.py`) when `DATABASE_URL` is
-  set. Callers only ever depend on the method surface, never on which
-  one is behind it.
+  store.py`'s `StateStoreProtocol`) — Postgres-backed
+  (`state/postgres_store.py`), like the LangGraph action-graph
+  checkpointer, via `DATABASE_URL`, mirroring apm_orchestrator's own
+  Postgres-only case-graph checkpointer; the API server requires it and
+  has no file-backed/in-memory fallback (see `api/dependencies.py`'s
+  `_require_database_url`). The file-backed `StateStore` class still
+  exists as a lightweight test double. Callers only ever depend on the
+  `StateStoreProtocol` method surface, never on which implementation is
+  behind it.
 - Prefer dry-run-testable code: a connector should be exercisable with
   `dry_run=True` and no live credentials, so its logic can be reviewed and
   tested before anyone wires up real accounts.
@@ -61,8 +66,9 @@ docs/            architecture, api contract, capability map, security guardrails
 .claude/skills/  tool-integration: checklist for adding a connector
 src/apm_connectors/
   config.py      env/config loading
-  state/         status + audit log store -- file-backed by default,
-                 Postgres-backed via DATABASE_URL (postgres_store.py)
+  state/         status + audit log store -- Postgres-backed via
+                 DATABASE_URL, required (postgres_store.py); store.py's
+                 file-backed StateStore is a test double only
   tools/         one module per external tool, common interface in base.py
   graph.py       small propose -> approval -> execute LangGraph layer
   api/           FastAPI app + /tools/* routes

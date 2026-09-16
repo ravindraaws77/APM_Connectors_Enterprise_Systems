@@ -279,8 +279,7 @@ the same for any id — whichever `process_id`/`action_id` string ended
 up being used, caller-supplied or generated — since the audit trail and
 pending-action store are shared infrastructure
 (`src/apm_connectors/state/store.py`'s `StateStoreProtocol` —
-file-backed by default, Postgres-backed via `DATABASE_URL` for a
-deployment that needs it to survive a redeploy; see
+Postgres-backed via `DATABASE_URL`, required to run this API; see
 `docs/deployment.md`).
 
 `GET /processes/pending` (no id) lists pending actions across *every*

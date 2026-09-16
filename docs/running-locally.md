@@ -19,11 +19,60 @@ but driven over real HTTP against a real running server process
 in-process `TestClient` — run just that suite with
 `pytest tests/integration -q`.
 
+## Durable state (Postgres, required)
+
+The API server's status/audit store and its LangGraph action-graph
+checkpointer are both Postgres-only — no file-backed/SQLite/in-memory
+fallback (mirroring apm_orchestrator's own Postgres-only case-graph
+checkpointer, which its `poller.py`/`scripts/run_case.py` also refuse
+to run without a `DATABASE_URL`). Set it, and install the optional
+`postgres` extra, before starting the server below:
+
+```
+pip install -e ".[connectors,postgres]"
+createdb apm_dev   # or point DATABASE_URL at any other reachable Postgres
+```
+
+then set `DATABASE_URL` in `.env` (see `.env.example`):
+
+```
+DATABASE_URL=postgresql://localhost/apm_dev
+```
+
+Tables (`apm_processes`, `apm_events`, `apm_pending_actions`, plus the
+checkpointer's own `checkpoint*` tables) are created automatically on
+first use — no separate migration step. `DATABASE_URL` works just as
+well pointed at a free managed Postgres (Neon, Supabase, etc.) for
+quick testing with no local Postgres install at all — live-verified end
+to end, including surviving a full container/task restart. One thing to
+know if you do: a serverless provider like Neon auto-suspends its
+compute after a few idle minutes, which used to surface as `SSL
+connection has been closed unexpectedly` on the first call after a
+while — both connection pools now pass `check=ConnectionPool.check_connection`,
+so a connection killed while idle in the pool is detected and
+transparently replaced rather than handed out broken
+(`state/postgres_store.py`, `api/dependencies.py`).
+
+`tests/test_postgres_state_store.py` and `tests/test_postgres_checkpointer.py`
+exercise this against a real Postgres directly (not through the API
+server); they're skipped automatically unless both the `postgres`
+extra is installed and `APM_TEST_DATABASE_URL` points at a real,
+reachable (and disposable — tests truncate its tables) database:
+
+```
+createdb apm_test
+APM_TEST_DATABASE_URL=postgresql://localhost/apm_test pytest tests/test_postgres_state_store.py tests/test_postgres_checkpointer.py -q
+```
+
 ## Run the API
 
 ```
 uvicorn apm_connectors.api.app:app --reload --port 8000
 ```
+
+Without `DATABASE_URL` set (above), this fails at startup with a clear
+`RuntimeError` before the port even binds -- there is no file-backed/
+in-memory fallback for the live server.
 
 Sanity check it's up:
 
@@ -70,50 +119,6 @@ exercise for real — see `docs/capability-map.md` for what each one
 needs. Every route works with fake clients (tests) with no `.env` at
 all; real credentials are only needed to actually call Gmail/Calendar/
 Excel.
-
-## Durable state (optional: Postgres)
-
-By default, status/audit state lives in a local JSON file and paused
-(proposed-but-not-yet-approved) actions live in a local SQLite file
-(both under `APM_STATE_DIR`, default `./state`) — zero extra infra, and
-both survive a plain process restart, but not a redeploy that wipes
-local disk. Set `DATABASE_URL` (see `.env.example`) to swap in
-`PostgresStateStore` and a Postgres-backed LangGraph checkpointer
-instead (`src/apm_connectors/state/postgres_store.py`,
-`src/apm_connectors/api/dependencies.py`), so that state survives a
-redeploy too — see `docs/deployment.md`'s "State is ephemeral"
-note for why this matters for a real deployment. Needs the optional
-`postgres` extra:
-
-```
-pip install -e ".[connectors,postgres]"
-```
-
-Tables (`apm_processes`, `apm_events`, `apm_pending_actions`, plus the
-checkpointer's own `checkpoint*` tables) are created automatically on
-first use — no separate migration step.
-
-`tests/test_postgres_state_store.py` and
-`tests/test_postgres_checkpointer.py` exercise this against a real
-Postgres; they're skipped automatically unless both the `postgres`
-extra is installed and `APM_TEST_DATABASE_URL` points at a real,
-reachable (and disposable — tests truncate its tables) database:
-
-```
-createdb apm_test
-APM_TEST_DATABASE_URL=postgresql://localhost/apm_test pytest tests/test_postgres_state_store.py tests/test_postgres_checkpointer.py -q
-```
-
-`DATABASE_URL` works just as well pointed at a free managed Postgres
-(Neon, Supabase, etc.) for quick testing with no local Postgres install
-at all — live-verified end to end against Neon, including surviving a
-full container/task restart. One thing to know if you do: a serverless
-provider like Neon auto-suspends its compute after a few idle minutes,
-which used to surface as `SSL connection has been closed unexpectedly`
-on the first call after a while — both connection pools now pass
-`check=ConnectionPool.check_connection`, so a connection killed while
-idle in the pool is detected and transparently replaced rather than
-handed out broken (`state/postgres_store.py`, `api/dependencies.py`).
 
 ## What this service is (and isn't)
 

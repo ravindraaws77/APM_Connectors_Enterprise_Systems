@@ -99,15 +99,6 @@ it, same as any other caller.
   network/team.
 - **HTTP, not HTTPS**, on the AWS deployment (`infra/aws/ecs-fargate/`)
   — see `docs/deployment.md`.
-- **State is ephemeral unless the deployment configured `DATABASE_URL`**
-  — with no Postgres backing it, both the audit log and any not-yet-
-  decided pending actions live on the container's local disk (a JSON
-  file and a SQLite file respectively), so they survive a plain process
-  restart but not a redeploy or task replacement that wipes that disk.
-  Ask whoever
-  deployed the instance you're targeting whether durable state is on
-  (see `docs/deployment.md`'s "Enabling durable state (Postgres)") if
-  that matters for how you're using it.
 - **Only whichever connectors are configured** are live — an
   unconfigured tool 503s cleanly rather than crashing (see
   `docs/capability-map.md` for what each one needs).

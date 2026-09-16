@@ -35,11 +35,10 @@ target state.
 ## 4. Auditability & traceability
 - Every tool call (read or write) and every approval decision is appended
   to the audit log (`src/apm_connectors/state/store.py`'s
-  `StateStoreProtocol` -- file-backed by default, Postgres-backed via
-  `DATABASE_URL` for a deployment that needs it to survive a redeploy;
-  see `docs/deployment.md`): who/what proposed it, what it was, the
-  decision, and the outcome. Logs are append-only from the
-  application's perspective.
+  `StateStoreProtocol` -- Postgres-backed via `DATABASE_URL`, required
+  to run this API; see `docs/deployment.md`): who/what proposed it,
+  what it was, the decision, and the outcome. Logs are append-only from
+  the application's perspective.
 - With `APM_API_KEYS` configured (section 1), *who* is a verified
   identity, not just a label: every proposed write records its
   authenticated caller as `proposed_by`, every decision records its

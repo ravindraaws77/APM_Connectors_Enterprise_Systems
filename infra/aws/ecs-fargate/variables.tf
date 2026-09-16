@@ -118,10 +118,14 @@ variable "jira_api_token" {
 }
 
 variable "database_url" {
-  description = "Postgres connection string (\"postgresql://user:pass@host:port/dbname\") for durable state -- swaps the default file-backed StateStore + in-memory LangGraph checkpointer for Postgres-backed ones (see src/apm_connectors/state/postgres_store.py) so status/audit state and paused approvals survive a redeploy or task replacement. Optional: leave empty to keep the default ephemeral, zero-infra behavior. Stored as an SSM SecureString, never a plain env var, and only created/attached at all when set (like google_token_json above) -- unlike the other secrets, an \"unset\" placeholder value would be a real, if broken, connection string, not an empty credential the app already knows how to treat as unconfigured."
+  description = "Postgres connection string (\"postgresql://user:pass@host:port/dbname\") the apm_connectors API needs to run at all -- required, not optional: its status/audit StateStore and its LangGraph action-graph checkpointer are both Postgres-only (see src/apm_connectors/api/dependencies.py, mirroring apm_orchestrator's own Postgres-only case-graph checkpointer), with no file-backed/SQLite/in-memory fallback. The app fails fast at startup without it. Stored as an SSM SecureString, never a plain env var."
   type        = string
-  default     = ""
   sensitive   = true
+
+  validation {
+    condition     = length(var.database_url) > 0
+    error_message = "database_url is required -- the apm_connectors API has no file-backed/in-memory fallback and refuses to start without a real Postgres connection string."
+  }
 }
 
 variable "api_keys" {

@@ -5,12 +5,13 @@ list_pending_actions, resolve_pending_action) — see that module's
 docstring for why callers only ever depend on this method surface, never
 on which implementation is behind it.
 
-Swap this in (instead of the file-backed default) by setting
-`DATABASE_URL`; `apm_connectors.api.dependencies.get_state_store` picks
-between the two based on that alone. Requires the optional `postgres`
-extra (`pip install -e ".[postgres]"`) -- imported lazily by
-dependencies.py so the zero-infra file-backed default never needs
-psycopg installed.
+This is what `apm_connectors.api.dependencies.get_state_store` always
+returns -- the API server requires `DATABASE_URL`, with no file-backed
+fallback (see that module's `_require_database_url`). Requires the
+optional `postgres` extra (`pip install -e ".[postgres]"`) -- imported
+lazily by dependencies.py so installing this package without the extra
+(e.g. just to run tests, which use the file-backed `StateStore` test
+double instead) never needs psycopg.
 """
 
 from __future__ import annotations
