@@ -2,7 +2,7 @@
 
 All cached (built once per running process, not per-request) since the
 compiled graph's checkpointer holds paused/in-progress state (Postgres or
-in memory, see get_action_graph below) for the lifetime of the server
+SQLite, see get_action_graph below) for the lifetime of the server
 process — a fresh graph per request would lose that state between a
 write proposal and its decision for the same process_id.
 
@@ -22,7 +22,7 @@ from typing import Any
 
 from fastapi import HTTPException, Security
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from langgraph.checkpoint.memory import MemorySaver
+from langgraph.checkpoint.sqlite import SqliteSaver
 
 from apm_connectors.config import load_settings
 from apm_connectors.graph import build_action_graph
@@ -41,7 +41,7 @@ def _get_postgres_pool() -> Any:
     Postgres checkpointer below, so a Postgres-backed deployment opens
     one pool of connections to the database rather than two. Only ever
     called when `DATABASE_URL` is set -- imports psycopg lazily so the
-    default file-backed/in-memory setup never needs the optional
+    default file-backed/SQLite-backed setup never needs the optional
     `postgres` extra installed.
     """
     from psycopg.rows import dict_row
@@ -62,6 +62,27 @@ def _get_postgres_pool() -> Any:
         check=ConnectionPool.check_connection,
         open=True,
     )
+
+
+@lru_cache
+def _get_sqlite_connection() -> Any:
+    """One sqlite3 connection for the default (no DATABASE_URL) SQLite
+    checkpointer below, opened once per process next to the file-backed
+    StateStore's own JSON file (same `APM_STATE_DIR`). Only ever called
+    when `database_url` is unset.
+
+    check_same_thread=False because this connection is shared across
+    requests, and FastAPI's sync `def` route handlers (every /tools/*
+    write route) run in a threadpool, not all on one thread; SqliteSaver
+    serializes access to a shared connection internally with its own
+    lock, so a single connection here is safe to reuse concurrently.
+    """
+    settings = load_settings()
+    settings.state_dir.mkdir(parents=True, exist_ok=True)
+
+    import sqlite3
+
+    return sqlite3.connect(str(settings.state_dir / "checkpoints.sqlite"), check_same_thread=False)
 
 
 @lru_cache
@@ -126,10 +147,13 @@ def get_action_graph():
 
     The checkpointer holds every paused (proposed-but-not-yet-decided)
     process's graph state — this is what a human approval decision
-    resumes. With no `DATABASE_URL`, that's in memory (MemorySaver): a
-    fine MVP default, but it means a restart loses anything mid-approval.
-    With `DATABASE_URL` set, it's `PostgresSaver` instead, so a paused
-    process survives a redeploy or a task replacement the same way the
+    resumes. With no `DATABASE_URL`, that's a local SQLite file next to
+    the file-backed StateStore's own JSON file (`SqliteSaver`, see
+    `_get_sqlite_connection` above): a restart or crash no longer loses
+    anything mid-approval, at the same zero-infra cost as the file-backed
+    StateStore default. With `DATABASE_URL` set, it's `PostgresSaver`
+    instead, so a paused process also survives losing the local disk
+    entirely — a redeploy or an ECS task replacement — the same way the
     Postgres-backed StateStore does — the two settings are meant to be
     turned on together.
     """
@@ -140,7 +164,8 @@ def get_action_graph():
         checkpointer = PostgresSaver(_get_postgres_pool())
         checkpointer.setup()
     else:
-        checkpointer = MemorySaver()
+        checkpointer = SqliteSaver(_get_sqlite_connection())
+        checkpointer.setup()
     return build_action_graph(get_tools(), get_state_store(), checkpointer=checkpointer)
 
 

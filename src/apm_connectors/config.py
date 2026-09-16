@@ -53,7 +53,7 @@ class Settings:
     # setting needed to enable it (no separate "enabled" flag).
     drive_folder_id: str | None = None
     # Durable state, opt-in: when set, apm_connectors.api.dependencies
-    # swaps the default file-backed StateStore + in-memory LangGraph
+    # swaps the default file-backed StateStore + SQLite-backed LangGraph
     # checkpointer for Postgres-backed ones (state/postgres_store.py) --
     # see docs/deployment.md's "State is ephemeral" known limitation.
     # A standard "postgresql://user:pass@host:port/dbname" URL. Requires

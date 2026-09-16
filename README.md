@@ -59,7 +59,7 @@ See `docs/running-locally.md` for the full walkthrough.
   avatar interface, plus the production-scalability and security
   hardening that goes with it.
 
-Durable state (swapping the default file-backed/in-memory status,
+Durable state (swapping the default file-backed/SQLite-backed status,
 audit log, and paused-approval storage for Postgres) is covered inline
 in `docs/running-locally.md` ("Durable state") and `docs/deployment.md`
 ("Enabling durable state") rather than its own doc — see

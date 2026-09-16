@@ -74,12 +74,14 @@ Excel.
 ## Durable state (optional: Postgres)
 
 By default, status/audit state lives in a local JSON file and paused
-(proposed-but-not-yet-approved) actions live in memory — zero extra
-infra, but both are lost on restart. Set `DATABASE_URL` (see
-`.env.example`) to swap in `PostgresStateStore` and a Postgres-backed
-LangGraph checkpointer instead (`src/apm_connectors/state/postgres_store.py`,
+(proposed-but-not-yet-approved) actions live in a local SQLite file
+(both under `APM_STATE_DIR`, default `./state`) — zero extra infra, and
+both survive a plain process restart, but not a redeploy that wipes
+local disk. Set `DATABASE_URL` (see `.env.example`) to swap in
+`PostgresStateStore` and a Postgres-backed LangGraph checkpointer
+instead (`src/apm_connectors/state/postgres_store.py`,
 `src/apm_connectors/api/dependencies.py`), so that state survives a
-restart or redeploy — see `docs/deployment.md`'s "State is ephemeral"
+redeploy too — see `docs/deployment.md`'s "State is ephemeral"
 note for why this matters for a real deployment. Needs the optional
 `postgres` extra:
 

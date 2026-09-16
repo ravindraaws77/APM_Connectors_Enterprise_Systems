@@ -14,6 +14,11 @@ dependencies = [
     # every write (apm_connectors.graph) -- no Anthropic/Claude
     # dependency anywhere in this package.
     "langgraph>=0.2",
+    # The default (no DATABASE_URL) checkpointer for that graph: a local
+    # SQLite file next to the file-backed StateStore's own JSON file, so
+    # a paused approval survives a process restart at zero extra infra --
+    # see api/dependencies.py's get_action_graph.
+    "langgraph-checkpoint-sqlite>=2.0",
     # FastAPI backend.
     "fastapi>=0.110",
     "uvicorn>=0.29",
@@ -28,9 +33,9 @@ connectors = ["pytest>=8.0", "httpx>=0.27"]
 # Talks to that API purely over HTTP (never imports apm_connectors.tools
 # /graph directly) -- see src/apm_connectors_mcp/server.py's docstring.
 mcp = ["mcp>=2.0", "httpx>=0.27"]
-# Durable state: swaps the default file-backed StateStore and in-memory
-# LangGraph checkpointer for Postgres-backed ones when DATABASE_URL is
-# set (src/apm_connectors/state/postgres_store.py,
+# Durable state: swaps the default file-backed StateStore and SQLite-
+# backed LangGraph checkpointer for Postgres-backed ones when
+# DATABASE_URL is set (src/apm_connectors/state/postgres_store.py,
 # src/apm_connectors/api/dependencies.py). Optional and imported lazily
 # so the zero-infra local/file-backed default needs none of this.
 postgres = ["psycopg[binary,pool]>=3.2", "langgraph-checkpoint-postgres>=2.0"]

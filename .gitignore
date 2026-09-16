@@ -18,6 +18,8 @@ client_secret*.json
 *.db
 *.sqlite3
 state/*.json
+state/*.sqlite
+state/*.sqlite-*
 !state/.gitkeep
 
 # OS / editor

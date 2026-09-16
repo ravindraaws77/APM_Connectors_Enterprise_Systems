@@ -143,16 +143,18 @@ deciding on it, and both are pluggable behind the same on/off switch
 | | Default (no `DATABASE_URL`) | With `DATABASE_URL` set |
 |---|---|---|
 | Status + audit log + pending actions | `StateStore` — a local JSON file (`state/store.py`) | `PostgresStateStore` — same method surface, Postgres tables (`state/postgres_store.py`) |
-| LangGraph checkpoint (the graph's paused state itself) | `MemorySaver` — in-process memory | `PostgresSaver` (`langgraph-checkpoint-postgres`) |
+| LangGraph checkpoint (the graph's paused state itself) | `SqliteSaver` — a local SQLite file (`langgraph-checkpoint-sqlite`) | `PostgresSaver` (`langgraph-checkpoint-postgres`) |
 
 Both settings are meant to be turned on together — `api/dependencies.py`
 picks one pair or the other based solely on whether `DATABASE_URL` is
 set, sharing one `psycopg_pool.ConnectionPool` between the two Postgres
 implementations. The default costs zero extra infrastructure (fine for
-local dev), but means a process restart loses anything mid-approval;
-the Postgres-backed pair survives a restart or a redeploy — the actual
-scenario a real deployment needs to handle, live-verified end to end
-(propose → replace the ECS task entirely → the pending action and
+local dev) and, since both the JSON file and the SQLite file live on
+local disk, survives a plain process restart or crash; what it doesn't
+survive is losing that disk entirely — a redeploy or an ECS task
+replacement, where the Postgres-backed pair is what's needed — the
+actual scenario a real deployment needs to handle, live-verified end to
+end (propose → replace the ECS task entirely → the pending action and
 audit trail are still there on the brand-new task → approve → it
 executes). See `docs/running-locally.md` and `docs/deployment.md` for
 how to turn it on, including a note on serverless Postgres providers

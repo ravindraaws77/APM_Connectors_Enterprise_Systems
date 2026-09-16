@@ -197,10 +197,12 @@ task, since they're not sensitive on their own.
 
 By default the connector API's status/audit store is a JSON file on
 the container's local disk, and paused (proposed-but-not-yet-decided)
-actions live in the LangGraph checkpointer's memory — both lost on a
-redeploy or task replacement, since a Fargate task has no persistent
-local storage (see "Known limitations" below). Point the deployment at
-a real Postgres instance (RDS, or any reachable Postgres) to fix that:
+actions live in a SQLite file next to it (the LangGraph checkpointer's
+storage) — both survive a plain process restart, but both are still
+lost on a redeploy or task replacement, since a Fargate task has no
+persistent local storage (see "Known limitations" below). Point the
+deployment at a real Postgres instance (RDS, or any reachable Postgres)
+to fix that:
 
 ```
 database_url = "postgresql://user:password@host:5432/apm"
@@ -209,8 +211,8 @@ database_url = "postgresql://user:password@host:5432/apm"
 then `terraform apply`. `database_url` is stored as an SSM
 `SecureString`, the same as the other secrets, and — unlike them —
 only created and attached to the task at all when set: leaving it
-unset keeps today's default file-backed/in-memory behavior exactly as
-before, no empty/placeholder connection string involved. The app
+unset keeps today's default file-backed/SQLite-backed behavior exactly
+as before, no empty/placeholder connection string involved. The app
 creates its tables on first use (`src/apm_connectors/state/postgres_store.py`,
 plus the LangGraph checkpointer's own `checkpoint*` tables) — no
 separate migration step or `terraform apply` needed to set up schema
