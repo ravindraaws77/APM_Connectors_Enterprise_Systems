@@ -42,6 +42,17 @@ def create_app() -> FastAPI:
     def list_processes(store: StateStore = Depends(get_state_store)) -> list[dict]:
         return store.list_processes()
 
+    @app.get("/processes/pending", dependencies=_authenticated)
+    def list_all_pending_actions(store: StateStore = Depends(get_state_store)) -> list[dict]:
+        """Every pending action across every process, not just one --
+        the single feed a human-approval UI or reviewer can poll without
+        already knowing which process ids exist. Registered before the
+        {process_id}/... routes below only for readability; FastAPI
+        doesn't actually need the ordering since 'pending' here has no
+        second path segment, so it can't collide with them.
+        """
+        return store.list_pending_actions()
+
     @app.get("/processes/{process_id}/status", dependencies=_authenticated)
     def get_process_status(process_id: str, store: StateStore = Depends(get_state_store)) -> dict:
         status = store.get_status(process_id)

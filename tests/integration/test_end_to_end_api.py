@@ -27,6 +27,37 @@ def test_health_and_processes_are_reachable(live_server: LiveServer) -> None:
     assert isinstance(processes.json(), list)
 
 
+def test_global_pending_route_spans_processes_over_http(live_server: LiveServer) -> None:
+    """GET /processes/pending -- unlike GET /processes/{id}/pending -- is
+    the single feed covering every process, for a reviewer/UI that
+    doesn't already know which process ids are in flight.
+    """
+    base = live_server.base_url
+
+    requests.post(
+        f"{base}/tools/gmail/send",
+        json={"process_id": "int-pending-1", "to": "a@b.com", "subject": "s1", "body": "b1"},
+        timeout=5,
+    )
+    requests.post(
+        f"{base}/tools/gmail/send",
+        json={"process_id": "int-pending-2", "to": "a@b.com", "subject": "s2", "body": "b2"},
+        timeout=5,
+    )
+
+    pending = requests.get(f"{base}/processes/pending", timeout=5)
+    assert pending.status_code == 200
+    process_ids = {a["process_id"] for a in pending.json()}
+    assert {"int-pending-1", "int-pending-2"} <= process_ids
+
+    requests.post(f"{base}/tools/actions/int-pending-1/decision", json={"approved": True}, timeout=5)
+
+    remaining = requests.get(f"{base}/processes/pending", timeout=5).json()
+    remaining_ids = {a["process_id"] for a in remaining}
+    assert "int-pending-1" not in remaining_ids
+    assert "int-pending-2" in remaining_ids
+
+
 def test_gmail_send_end_to_end_over_http(live_server: LiveServer) -> None:
     base = live_server.base_url
 
