@@ -21,7 +21,7 @@ from langgraph.checkpoint.memory import MemorySaver
 from apm_connectors.graph import build_action_graph
 from apm_connectors.api.app import create_app
 from apm_connectors.api import dependencies as dependencies_module
-from apm_connectors.api.dependencies import get_action_graph, get_tools, require_caller
+from apm_connectors.api.dependencies import get_action_graph, get_state_store, get_tools, require_caller
 from apm_connectors.state.store import StateStore
 from apm_connectors.tools.calendar_tool import CalendarTool
 from apm_connectors.tools.drive_tool import DriveTool
@@ -70,6 +70,12 @@ def _client(
     app = create_app()
     app.dependency_overrides[get_tools] = lambda: tools
     app.dependency_overrides[get_action_graph] = lambda: action_graph
+    # Without this, /processes/* routes fall through to get_state_store's
+    # real @lru_cache'd default (a stray state/apm_state.json on disk)
+    # instead of this fixture's tmp_path-scoped store -- live-caught by
+    # test_global_pending_route_lists_actions_across_every_process
+    # returning leftover pending actions from unrelated runs.
+    app.dependency_overrides[get_state_store] = lambda: store
     return TestClient(app), store, gmail_client, calendar_client, excel_source, salesforce_client, jira_client
 
 
@@ -528,6 +534,38 @@ def test_processes_routes_gated_but_health_is_not(tmp_path: Path, monkeypatch: p
     assert client.get("/health").status_code == 200
     assert client.get("/processes").status_code == 401
     assert client.get("/processes", headers={"Authorization": "Bearer sk_abc123"}).status_code == 200
+
+
+def test_global_pending_route_lists_actions_across_every_process(tmp_path: Path) -> None:
+    """GET /processes/pending is the cross-process feed a human-approval
+    UI/reviewer polls without already knowing which process ids exist --
+    distinct from GET /processes/{id}/pending, which is scoped to one.
+    """
+    client, *_ = _client(tmp_path)
+
+    client.post(
+        "/tools/gmail/send",
+        json={"process_id": "order-10", "to": "a@b.com", "subject": "s1", "body": "b1"},
+    )
+    client.post(
+        "/tools/calendar/create-event",
+        json={
+            "process_id": "order-11",
+            "title": "Renewal call",
+            "start": "2026-10-01T10:00:00Z",
+            "end": "2026-10-01T10:30:00Z",
+        },
+    )
+
+    response = client.get("/processes/pending")
+    assert response.status_code == 200
+    body = response.json()
+    assert {a["process_id"] for a in body} == {"order-10", "order-11"}
+
+    client.post("/tools/actions/order-10/decision", json={"approved": True})
+
+    remaining = client.get("/processes/pending").json()
+    assert {a["process_id"] for a in remaining} == {"order-11"}
 
 
 def test_propose_and_decide_attribute_different_authenticated_callers(tmp_path: Path) -> None:

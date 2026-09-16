@@ -283,6 +283,12 @@ file-backed by default, Postgres-backed via `DATABASE_URL` for a
 deployment that needs it to survive a redeploy; see
 `docs/deployment.md`).
 
+`GET /processes/pending` (no id) lists pending actions across *every*
+process — the feed a human-approval UI or reviewer polls when it
+doesn't already know which process ids are in flight, rather than
+having to enumerate `GET /processes` first and call
+`GET /processes/{id}/pending` per id.
+
 ## Stability
 
 Treat this as the contract a reasoning/orchestration layer codes
