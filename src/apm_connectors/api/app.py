@@ -17,11 +17,14 @@ orchestration layer is expected to be deployed separately and call
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+
 from fastapi import Depends, FastAPI, HTTPException
 
-from apm_connectors.api.dependencies import get_state_store, require_caller
+from apm_connectors.api.dependencies import get_action_graph, get_state_store, require_caller
 from apm_connectors.api.tools_routes import router as tools_router
-from apm_connectors.state.store import StateStore
+from apm_connectors.state.store import StateStoreProtocol
 
 # Every /processes/* route below sits behind require_caller too (never
 # /health -- a load balancer's health check carries no credentials). See
@@ -30,8 +33,29 @@ from apm_connectors.state.store import StateStore
 _authenticated = [Depends(require_caller)]
 
 
+@asynccontextmanager
+async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
+    """Builds the action graph (which builds the state store and tools
+    too) at startup, not on whatever request happens to land first --
+    so `/health` never reports "ok" for a server that can't actually
+    serve anything. Without DATABASE_URL this raises
+    api.dependencies._require_database_url's clear RuntimeError before
+    the server ever binds its port; with it set, this also catches an
+    unreachable Postgres immediately rather than on the first real call.
+
+    Goes through app.dependency_overrides (not the bare get_action_graph
+    call a route's `Depends` would resolve to) so tests that override it
+    with an in-memory fake (tests/integration/conftest.py's real-uvicorn
+    fixtures) never need a real Postgres either -- exactly what a route
+    handler gets when it depends on get_action_graph normally.
+    """
+    build_graph = app.dependency_overrides.get(get_action_graph, get_action_graph)
+    build_graph()
+    yield
+
+
 def create_app() -> FastAPI:
-    app = FastAPI(title="APM Connectors & Enterprise Systems API")
+    app = FastAPI(title="APM Connectors & Enterprise Systems API", lifespan=_lifespan)
     app.include_router(tools_router)
 
     @app.get("/health")
@@ -39,11 +63,11 @@ def create_app() -> FastAPI:
         return {"status": "ok"}
 
     @app.get("/processes", dependencies=_authenticated)
-    def list_processes(store: StateStore = Depends(get_state_store)) -> list[dict]:
+    def list_processes(store: StateStoreProtocol = Depends(get_state_store)) -> list[dict]:
         return store.list_processes()
 
     @app.get("/processes/pending", dependencies=_authenticated)
-    def list_all_pending_actions(store: StateStore = Depends(get_state_store)) -> list[dict]:
+    def list_all_pending_actions(store: StateStoreProtocol = Depends(get_state_store)) -> list[dict]:
         """Every pending action across every process, not just one --
         the single feed a human-approval UI or reviewer can poll without
         already knowing which process ids exist. Registered before the
@@ -54,18 +78,18 @@ def create_app() -> FastAPI:
         return store.list_pending_actions()
 
     @app.get("/processes/{process_id}/status", dependencies=_authenticated)
-    def get_process_status(process_id: str, store: StateStore = Depends(get_state_store)) -> dict:
+    def get_process_status(process_id: str, store: StateStoreProtocol = Depends(get_state_store)) -> dict:
         status = store.get_status(process_id)
         if status is None:
             raise HTTPException(status_code=404, detail=f"unknown process_id: {process_id}")
         return status
 
     @app.get("/processes/{process_id}/history", dependencies=_authenticated)
-    def get_process_history(process_id: str, store: StateStore = Depends(get_state_store)) -> list[dict]:
+    def get_process_history(process_id: str, store: StateStoreProtocol = Depends(get_state_store)) -> list[dict]:
         return store.list_events(process_id)
 
     @app.get("/processes/{process_id}/pending", dependencies=_authenticated)
-    def get_pending_actions(process_id: str, store: StateStore = Depends(get_state_store)) -> list[dict]:
+    def get_pending_actions(process_id: str, store: StateStoreProtocol = Depends(get_state_store)) -> list[dict]:
         return store.list_pending_actions(process_id)
 
     return app

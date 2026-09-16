@@ -4,6 +4,9 @@
 aws_region = "us-east-1"
 app_name   = "apm-connectors"
 
+# Required -- the app fails to start without it, no fallback.
+database_url = ""  # e.g. "postgresql://user:pass@host:5432/apm"
+
 # google_client_id        = ""
 # google_client_secret    = ""
 # google_token_json       = ""  # paste .google_token.json's full contents (see docs/deployment.md)
@@ -15,5 +18,4 @@ app_name   = "apm-connectors"
 # jira_base_url  = ""  # e.g. "https://yourcompany.atlassian.net"
 # jira_email     = ""
 # jira_api_token = ""
-# database_url   = ""  # e.g. "postgresql://user:pass@host:5432/apm" -- leave unset for the default file-backed/in-memory state
 # api_keys       = ""  # e.g. "orchestrator:sk_live_...,alice:sk_live_..." -- leave unset for the default no-auth behavior (see docs/api-contract.md)

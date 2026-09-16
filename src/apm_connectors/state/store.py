@@ -4,15 +4,16 @@ MVP: everything the agent does gets written here so status survives a
 restart and is available to the UI (phase 6) and to whoever needs to
 answer "what happened and why".
 
-Swap-out note: this is intentionally simple (a JSON file + a lock) so a
-zero-infra local dev setup needs no extra services. For a deployment that
-needs status/audit state to survive a redeploy or be shared across more
-than one API process, `apm_connectors.state.postgres_store.PostgresStateStore`
-implements this exact same method surface against Postgres instead --
-`apm_connectors.api.dependencies.get_state_store` picks between the two
-based on whether `DATABASE_URL` is set. Callers should only ever depend
-on the methods below (not the file format, not which class this is), so
-that swap never ripples outward -- see `StateStoreProtocol`.
+Not what the API server actually runs on: `apm_connectors.api.dependencies.
+get_state_store` is Postgres-only (`apm_connectors.state.postgres_store.
+PostgresStateStore`, same method surface, same `StateStoreProtocol`) --
+mirroring apm_orchestrator's own Postgres-only CaseRegistry, no file-
+backed fallback. This class lives on as a lightweight, zero-infra test
+double instead (see tests/test_action_graph.py and friends, which build
+one directly against a tmp_path file rather than going through
+dependencies.py) -- callers should still only ever depend on the methods
+below, not the file format, so a test swapping this for
+`PostgresStateStore` never ripples outward.
 """
 
 from __future__ import annotations

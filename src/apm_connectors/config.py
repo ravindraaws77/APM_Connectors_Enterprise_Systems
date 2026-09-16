@@ -52,12 +52,15 @@ class Settings:
     # tools/drive_tool.py's module docstring for why this is the only
     # setting needed to enable it (no separate "enabled" flag).
     drive_folder_id: str | None = None
-    # Durable state, opt-in: when set, apm_connectors.api.dependencies
-    # swaps the default file-backed StateStore + in-memory LangGraph
-    # checkpointer for Postgres-backed ones (state/postgres_store.py) --
-    # see docs/deployment.md's "State is ephemeral" known limitation.
-    # A standard "postgresql://user:pass@host:port/dbname" URL. Requires
-    # the optional `postgres` extra (`pip install -e ".[postgres]"`).
+    # Required to run apm_connectors' own API server: its status/audit
+    # StateStore and its LangGraph action-graph checkpointer are both
+    # Postgres-only (apm_connectors.api.dependencies -- see
+    # docs/running-locally.md's "Durable state (Postgres)" section).
+    # Left optional in this dataclass, not enforced here, because other
+    # callers of load_settings() (e.g. apm_connectors_mcp, tests) don't
+    # need a database at all. A standard
+    # "postgresql://user:pass@host:port/dbname" URL. Requires the
+    # optional `postgres` extra (`pip install -e ".[postgres]"`).
     database_url: str | None = None
     # API auth, opt-in like every other setting above: {key: caller_name},
     # parsed from APM_API_KEYS. Empty (unset) means auth is off -- every

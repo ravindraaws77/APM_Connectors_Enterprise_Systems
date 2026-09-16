@@ -167,9 +167,10 @@ a new policy + a different toolbelt subset, not new plumbing.
 ## Phase 3 — production scalability
 
 **This repo:**
-- Turn on the already-built Postgres-backed state store
-  (`DATABASE_URL`) in production — not optional once real approvals
-  are in flight.
+- **Done:** the Postgres-backed state store and LangGraph checkpointer
+  (`DATABASE_URL`) are now required, not optional, to run the API
+  server at all — no file-backed/in-memory fallback (see
+  `docs/deployment.md`, `api/dependencies.py`'s `_require_database_url`).
 - ECS service auto-scaling (target tracking on CPU/request count) —
   the Postgres-backed checkpointer already makes this safe across
   multiple tasks.

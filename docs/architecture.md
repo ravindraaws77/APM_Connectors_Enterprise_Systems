@@ -137,28 +137,34 @@ is ever sent/created/written on a rejection.
 ## Persistence
 
 Two things need to survive between a write being proposed and a human
-deciding on it, and both are pluggable behind the same on/off switch
-(`DATABASE_URL`):
+deciding on it, and both are Postgres-only, required via `DATABASE_URL`
+— no file-backed/SQLite/in-memory fallback for the API server itself:
 
-| | Default (no `DATABASE_URL`) | With `DATABASE_URL` set |
-|---|---|---|
-| Status + audit log + pending actions | `StateStore` — a local JSON file (`state/store.py`) | `PostgresStateStore` — same method surface, Postgres tables (`state/postgres_store.py`) |
-| LangGraph checkpoint (the graph's paused state itself) | `MemorySaver` — in-process memory | `PostgresSaver` (`langgraph-checkpoint-postgres`) |
+| | Implementation |
+|---|---|
+| Status + audit log + pending actions | `PostgresStateStore` (`state/postgres_store.py`) |
+| LangGraph checkpoint (the graph's paused state itself) | `PostgresSaver` (`langgraph-checkpoint-postgres`) |
 
-Both settings are meant to be turned on together — `api/dependencies.py`
-picks one pair or the other based solely on whether `DATABASE_URL` is
-set, sharing one `psycopg_pool.ConnectionPool` between the two Postgres
-implementations. The default costs zero extra infrastructure (fine for
-local dev), but means a process restart loses anything mid-approval;
-the Postgres-backed pair survives a restart or a redeploy — the actual
-scenario a real deployment needs to handle, live-verified end to end
-(propose → replace the ECS task entirely → the pending action and
-audit trail are still there on the brand-new task → approve → it
-executes). See `docs/running-locally.md` and `docs/deployment.md` for
-how to turn it on, including a note on serverless Postgres providers
-(Neon, etc.) auto-suspending idle compute, and the connection-health
-check (`check=ConnectionPool.check_connection`) that makes both pools
-recover from that transparently.
+`api/dependencies.py` builds both, sharing one
+`psycopg_pool.ConnectionPool` between them, and refuses to build either
+(a clear `RuntimeError` from `_require_database_url`, raised again at
+server startup by `api/app.py`'s lifespan hook before the port even
+binds) if `DATABASE_URL` isn't set — mirroring apm_orchestrator's own
+Postgres-only case-graph checkpointer, which its `poller.py`/
+`scripts/run_case.py` refuse to run without a `DATABASE_URL` either.
+That's the actual scenario a real deployment needs to handle, live-
+verified end to end (propose → replace the ECS task entirely → the
+pending action and audit trail are still there on the brand-new task →
+approve → it executes). See `docs/running-locally.md` and
+`docs/deployment.md` for how to configure it, including a note on
+serverless Postgres providers (Neon, etc.) auto-suspending idle compute,
+and the connection-health check (`check=ConnectionPool.check_connection`)
+that makes the pool recover from that transparently.
+
+The file-backed `StateStore` class (`state/store.py`) still exists, but
+only as a lightweight, zero-infra test double most of the test suite
+constructs directly (never through `api/dependencies.py`) — the same
+role `MemorySaver` plays for the LangGraph checkpointer in unit tests.
 
 Callers (tools, routes, tests) only ever depend on `StateStoreProtocol`'s
 method surface, never on which implementation is behind it — that's

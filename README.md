@@ -59,19 +59,21 @@ See `docs/running-locally.md` for the full walkthrough.
   avatar interface, plus the production-scalability and security
   hardening that goes with it.
 
-Durable state (swapping the default file-backed/in-memory status,
-audit log, and paused-approval storage for Postgres) is covered inline
-in `docs/running-locally.md` ("Durable state") and `docs/deployment.md`
-("Enabling durable state") rather than its own doc — see
-`src/apm_connectors/state/postgres_store.py` for the implementation.
+Durable state (status, audit log, and paused-approval storage, all
+Postgres-backed, required to run the API server at all) is covered
+inline in `docs/running-locally.md` ("Durable state") and
+`docs/deployment.md` ("Durable state (Postgres)") rather than its own
+doc — see `src/apm_connectors/state/postgres_store.py` for the
+implementation.
 
 ## Layout
 
 ```
 src/apm_connectors/
   config.py      env/config loading
-  state/         status + audit log store -- file-backed by default,
-                 Postgres-backed via DATABASE_URL (postgres_store.py)
+  state/         status + audit log store -- Postgres-backed via
+                 DATABASE_URL, required (postgres_store.py); store.py's
+                 file-backed StateStore is a test double only
   tools/         one module per external tool, common interface in base.py
   graph.py       the small propose -> approval -> execute LangGraph layer
   api/           FastAPI app exposing tools/graph over HTTP (/tools/*)

@@ -22,7 +22,7 @@ your AWS credentials itself.
 [Enabling real Gmail/Calendar](#enabling-real-gmailcalendar-on-this-deployment) ·
 [Enabling real Salesforce](#enabling-real-salesforce-on-this-deployment) ·
 [Enabling real Jira](#enabling-real-jira-on-this-deployment) ·
-[Enabling durable state (Postgres)](#enabling-durable-state-postgres-on-this-deployment) ·
+[Durable state (Postgres, required)](#durable-state-postgres-required-on-this-deployment) ·
 [Enabling API auth](#enabling-api-auth-on-this-deployment) ·
 [Known limitations](#known-limitations-mvp-tradeoff-same-as-running-locally) ·
 [Troubleshooting](#troubleshooting) ·
@@ -41,18 +41,29 @@ your AWS credentials itself.
   traffic to the task).
 - An execution role the task uses to pull the image, write logs, and
   read the secrets from SSM.
-- Three SSM Parameter Store `SecureString` entries for the connectors'
+- Four SSM Parameter Store `SecureString` entries: the connectors'
   secrets (`GOOGLE_CLIENT_SECRET`, `SALESFORCE_CLIENT_SECRET`,
-  `JIRA_API_TOKEN`) — never a plain environment variable.
+  `JIRA_API_TOKEN`), plus `DATABASE_URL` — required, not one of the
+  optional connectors, see "Durable state (Postgres, required)" below
+  — never a plain environment variable.
 - A CloudWatch log group for the container's stdout/stderr.
 
 Every connector env var is optional and empty by default, exactly like
 an unfilled-in local `.env` (see `.env.example`): leave one unset and
 its `/tools/*` routes just 503 until you configure it — the service
 still deploys and passes its health check with zero connectors wired up.
+`database_url` is not one of these — it's required (see "Durable state
+(Postgres, required)" below); the task fails its health check
+indefinitely without it.
 
 ## Prerequisites
 
+- A reachable Postgres instance (RDS, Aurora Serverless, a free
+  managed provider like [Neon](https://neon.tech), or anything else
+  reachable from the task) and its connection string, for
+  `database_url` — required, not optional; see "Durable state
+  (Postgres, required)" below. This Terraform module doesn't provision
+  Postgres itself, only wires up the connection string once you have one.
 - An AWS account with permissions to create ECR repos, IAM roles, SSM
   parameters, VPC security groups, an ALB, and ECS resources.
 - [Terraform](https://developer.hashicorp.com/terraform/install) >= 1.5
@@ -80,7 +91,7 @@ still deploys and passes its health check with zero connectors wired up.
 
 ```
 cd infra/aws/ecs-fargate
-cp terraform.tfvars.example terraform.tfvars   # fill in whichever connectors you want live
+cp terraform.tfvars.example terraform.tfvars   # set database_url (required), plus whichever connectors you want live
 terraform init
 terraform apply
 ```
@@ -193,30 +204,29 @@ then `terraform apply`. `jira_api_token` is stored as an SSM
 `jira_base_url`/`jira_email` are plain environment variables on the
 task, since they're not sensitive on their own.
 
-## Enabling durable state (Postgres) on this deployment
+## Durable state (Postgres, required) on this deployment
 
-By default the connector API's status/audit store is a JSON file on
-the container's local disk, and paused (proposed-but-not-yet-decided)
-actions live in the LangGraph checkpointer's memory — both lost on a
-redeploy or task replacement, since a Fargate task has no persistent
-local storage (see "Known limitations" below). Point the deployment at
-a real Postgres instance (RDS, or any reachable Postgres) to fix that:
+The connector API's status/audit store and its LangGraph action-graph
+checkpointer are both Postgres-only — no file-backed/SQLite/in-memory
+fallback (mirroring apm_orchestrator's own Postgres-only case-graph
+checkpointer). The task fails its health check (and every real request)
+without a working `database_url`:
 
 ```
 database_url = "postgresql://user:password@host:5432/apm"
 ```
 
-then `terraform apply`. `database_url` is stored as an SSM
-`SecureString`, the same as the other secrets, and — unlike them —
-only created and attached to the task at all when set: leaving it
-unset keeps today's default file-backed/in-memory behavior exactly as
-before, no empty/placeholder connection string involved. The app
-creates its tables on first use (`src/apm_connectors/state/postgres_store.py`,
+`terraform apply` refuses to run without it (a Terraform `validation`
+block on the `database_url` variable). It's stored as an SSM
+`SecureString`, the same as the other secrets, and — unlike the
+optional connector/auth secrets below — always created and attached to
+the task, since there's no "unconfigured" state for it to represent.
+The app creates its tables on first use (`src/apm_connectors/state/postgres_store.py`,
 plus the LangGraph checkpointer's own `checkpoint*` tables) — no
-separate migration step or `terraform apply` needed to set up schema
-once the database itself exists and is reachable from the task's
-security group (`aws_security_group.service` — an RDS instance in the
-same VPC needs to allow inbound from it).
+separate migration step needed to set up schema once the database
+itself exists and is reachable from the task's security group
+(`aws_security_group.service` — an RDS instance in the same VPC needs
+to allow inbound from it).
 
 This Terraform module doesn't provision the Postgres instance itself
 (RDS, Aurora Serverless, or otherwise) — only wires up `database_url`
@@ -257,9 +267,10 @@ api_keys = "orchestrator:sk_live_..., alice:sk_live_..."
 then `terraform apply`. Same format as `APM_API_KEYS` locally (see
 `.env.example`) — one `name:key` pair per caller, comma-separated.
 `api_keys` is stored as an SSM `SecureString`, the same as the other
-secrets, and — like `database_url` — only created and attached to the
-task at all when set: leaving it unset keeps today's no-auth default
-exactly as before, no empty/placeholder key involved. Once set, every
+secrets, and — unlike `database_url` (required, always created) —
+only created and attached to the task at all when set: leaving it
+unset keeps today's no-auth default exactly as before, no
+empty/placeholder key involved. Once set, every
 `/tools/*` and `/processes/*` request against `service_url` needs
 `Authorization: Bearer <key>` matching one of these
 (`GET /health` stays open, for the ALB's own health check) — verify
@@ -276,10 +287,6 @@ as a change on its own — `terraform apply` forces the redeploy anyway
 
 ## Known limitations (MVP tradeoff, same as running locally)
 
-- **State is ephemeral unless `database_url` is set.** See "Enabling
-  durable state (Postgres) on this deployment" above — with no
-  `database_url`, a redeploy or task replacement loses the audit log
-  and any paused (proposed-but-not-yet-decided) actions.
 - **HTTP, not HTTPS.** The ALB listens on plain HTTP:80 for
   simplicity — there's no domain name or ACM certificate wired up here.
   Add an HTTPS listener (ACM cert + a domain in Route 53 or elsewhere)
@@ -341,7 +348,10 @@ logs).
 
 ## Local Docker (no AWS)
 
-To sanity-check the same image locally, without deploying anything:
+To sanity-check the same image locally, without deploying anything.
+`.env` needs `DATABASE_URL` set to a reachable Postgres (see
+`docs/running-locally.md`'s "Durable state (Postgres)") — the container
+fails its health check without it, same as the real deployment:
 
 ```
 docker build -t apm-connectors .

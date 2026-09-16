@@ -151,7 +151,9 @@ def build_action_graph(tools: dict[str, BaseTool], state_store: StateStore, chec
     """`tools` keys are tool names ("gmail", "google_calendar",
     "excel_file"); execute_node looks up whichever one a proposed action
     names. `checkpointer` is required explicitly (rather than defaulting
-    to MemorySaver here) so callers decide the persistence story.
+    to a particular saver here) so callers decide the persistence story
+    -- see api/dependencies.py's get_action_graph for the Postgres-only
+    checkpointer this package's own API server always uses.
     """
     graph = StateGraph(GraphState)
     graph.add_node("propose", _propose_node(state_store))
