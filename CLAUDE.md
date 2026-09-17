@@ -62,7 +62,7 @@ catch that way.
 ## Layout
 
 ```
-docs/            architecture, api contract, capability map, security guardrails, running locally, deployment
+docs/            architecture, api contract, capability map, security guardrails, running locally, deployment, Salesforce/Jira test-org setup
 .claude/skills/  tool-integration: checklist for adding a connector
 src/apm_connectors/
   config.py      env/config loading

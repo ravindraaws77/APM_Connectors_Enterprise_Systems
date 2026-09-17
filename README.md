@@ -54,6 +54,11 @@ See `docs/running-locally.md` for the full walkthrough.
 - `docs/google-account-setup.md` — pointing the Gmail/Calendar
   connectors at a different Google account, locally or on the AWS
   deployment.
+- `docs/salesforce-jira-test-setup.md` — provisioning a Salesforce
+  Developer Edition org and Jira Cloud site to test against: Setup/
+  Object Manager navigation, adding a custom field, and — the one that
+  actually breaks things — verifying real picklist values and issue
+  types before writing them into a business agent's `policy.yaml`.
 - `docs/roadmap.md` — the plan for the layer that calls into this API
   next: a separate repo for a multi-agent supervisor + visual/voice
   avatar interface, plus the production-scalability and security
