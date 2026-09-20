@@ -135,7 +135,15 @@ def _execute_node(tools: dict[str, BaseTool], state_store: StateStore):
 
         tool = tools[proposed["tool"]]
         method = getattr(tool, proposed["method"])
-        action_result = method(process_id, dry_run=False, **proposed["payload"])
+        try:
+            action_result = method(process_id, dry_run=False, **proposed["payload"])
+        except Exception as exc:
+            tool.record_failure(
+                process_id,
+                f"{proposed['description']} failed: {exc}",
+                {"method": proposed["method"], "payload": proposed["payload"]},
+            )
+            raise
         outcome = {
             "executed": action_result.executed,
             "description": action_result.description,

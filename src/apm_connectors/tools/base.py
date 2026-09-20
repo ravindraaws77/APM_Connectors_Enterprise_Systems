@@ -93,3 +93,19 @@ class BaseTool(ABC):
         """
         event_type = "action_executed" if not dry_run else "action_proposed"
         self._log(process_id, event_type, summary, {"dry_run": dry_run})
+
+    def record_failure(
+        self,
+        process_id: str,
+        summary: str,
+        details: dict[str, Any] | None = None,
+        caller: str | None = None,
+    ) -> None:
+        """Call from a route's or execute_node's `except` block when a
+        connector call raises (a network error, an upstream 4xx/5xx, an
+        exhausted retry), so a real failure leaves an "action_failed" row
+        on the audit trail instead of surfacing only as a 502 with
+        nothing recorded. Never suppresses the exception -- callers still
+        re-raise (or let it propagate) after logging.
+        """
+        self._log(process_id, "action_failed", summary, details, caller)

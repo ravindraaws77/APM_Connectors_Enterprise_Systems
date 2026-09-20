@@ -8,6 +8,7 @@ execute until a human decision arrives via resume_process.
 
 from pathlib import Path
 
+import pytest
 from langgraph.checkpoint.memory import MemorySaver
 
 from apm_connectors.graph import build_action_graph, resume_process, start_action
@@ -15,7 +16,7 @@ from apm_connectors.state.store import StateStore
 from apm_connectors.tools.calendar_tool import CalendarTool
 from apm_connectors.tools.gmail_tool import GmailTool
 from tests.test_calendar_tool import FakeCalendarClient
-from tests.test_gmail_tool import FakeGmailClient
+from tests.test_gmail_tool import BrokenGmailClient, FakeGmailClient
 
 
 def _build(tmp_path: Path):
@@ -139,3 +140,32 @@ def test_calendar_action_via_the_same_graph(tmp_path: Path) -> None:
 
     assert outcome.final_result["executed"] is True
     assert len(calendar_client.inserted) == 1
+
+
+def test_execute_failure_is_logged_as_action_failed_and_still_raises(tmp_path: Path) -> None:
+    """A real write failure inside execute_node (a live Salesforce/Jira-
+    style network error or 5xx, simulated here via BrokenGmailClient)
+    must leave an "action_failed" audit row before the exception
+    propagates -- see graph.py's _execute_node and tools/base.py's
+    record_failure. Previously a failure like this left no audit-trail
+    row at all, only the 502 an API caller saw.
+    """
+    store = StateStore(tmp_path / "state.json")
+    tools = {"gmail": GmailTool(store, BrokenGmailClient())}
+    graph = build_action_graph(tools, store, checkpointer=MemorySaver())
+
+    start_action(
+        graph,
+        "order-4",
+        tool="gmail",
+        method="send_email",
+        description="Send a follow-up email",
+        payload={"to": "customer@realcorp.io", "subject": "Update", "body": "Your order is delayed."},
+    )
+
+    with pytest.raises(RuntimeError, match="simulated API failure"):
+        resume_process(graph, "order-4", approved=True)
+
+    events = store.list_events("order-4")
+    failed_event = next(e for e in events if e["event_type"] == "action_failed")
+    assert "simulated API failure" in failed_event["summary"]

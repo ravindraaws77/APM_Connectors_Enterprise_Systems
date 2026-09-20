@@ -116,6 +116,7 @@ def gmail_search(
     try:
         results = tool.search_emails(process_id, query=body.query, max_results=body.max_results, caller=caller)
     except Exception as exc:
+        tool.record_failure(process_id, f"Search Gmail ({body.query!r}) failed: {exc}", caller=caller)
         raise upstream_error(exc) from exc
     return [r.__dict__ for r in results]
 
@@ -131,6 +132,7 @@ def gmail_read(
     try:
         result = tool.read_message(process_id, message_id=body.message_id, caller=caller)
     except Exception as exc:
+        tool.record_failure(process_id, f"Read Gmail message {body.message_id} failed: {exc}", caller=caller)
         raise upstream_error(exc) from exc
     return result.__dict__
 
@@ -170,6 +172,7 @@ def calendar_search(
             caller=caller,
         )
     except Exception as exc:
+        tool.record_failure(process_id, f"Search Calendar ({body.query!r}) failed: {exc}", caller=caller)
         raise upstream_error(exc) from exc
     return [r.__dict__ for r in results]
 
@@ -185,6 +188,7 @@ def calendar_read(
     try:
         result = tool.read_event(process_id, event_id=body.event_id, caller=caller)
     except Exception as exc:
+        tool.record_failure(process_id, f"Read Calendar event {body.event_id} failed: {exc}", caller=caller)
         raise upstream_error(exc) from exc
     return result.__dict__
 
@@ -223,6 +227,7 @@ def excel_worksheets(
     try:
         return tool.list_worksheets(process_id, caller=caller)
     except Exception as exc:
+        tool.record_failure(process_id, f"List Excel worksheets failed: {exc}", caller=caller)
         raise upstream_error(exc) from exc
 
 
@@ -237,6 +242,9 @@ def excel_read(
     try:
         result = tool.read_range(process_id, sheet_name=body.sheet_name, address=body.address, caller=caller)
     except Exception as exc:
+        tool.record_failure(
+            process_id, f"Read Excel range {body.sheet_name}!{body.address} failed: {exc}", caller=caller
+        )
         raise upstream_error(exc) from exc
     return result.__dict__
 
@@ -271,6 +279,7 @@ def drive_list(
             process_id, name_contains=body.name_contains, max_results=body.max_results, caller=caller
         )
     except Exception as exc:
+        tool.record_failure(process_id, f"List Drive files failed: {exc}", caller=caller)
         raise upstream_error(exc) from exc
     return [r.__dict__ for r in results]
 
@@ -286,6 +295,7 @@ def drive_read(
     try:
         result = tool.read_file(process_id, file_id=body.file_id, caller=caller)
     except Exception as exc:
+        tool.record_failure(process_id, f"Read Drive file {body.file_id} failed: {exc}", caller=caller)
         raise upstream_error(exc) from exc
     return result.__dict__
 
@@ -332,6 +342,7 @@ def salesforce_query(
     try:
         results = tool.query_records(process_id, soql=body.soql, caller=caller)
     except Exception as exc:
+        tool.record_failure(process_id, f"Query Salesforce ({body.soql!r}) failed: {exc}", caller=caller)
         raise upstream_error(exc) from exc
     return [r.__dict__ for r in results]
 
@@ -347,6 +358,9 @@ def salesforce_read(
     try:
         result = tool.get_record(process_id, object_name=body.object_name, record_id=body.record_id, caller=caller)
     except Exception as exc:
+        tool.record_failure(
+            process_id, f"Read Salesforce {body.object_name} {body.record_id} failed: {exc}", caller=caller
+        )
         raise upstream_error(exc) from exc
     return result.__dict__
 
@@ -393,6 +407,7 @@ def jira_search(
     try:
         results = tool.search_issues(process_id, jql=body.jql, max_results=body.max_results, caller=caller)
     except Exception as exc:
+        tool.record_failure(process_id, f"Search Jira ({body.jql!r}) failed: {exc}", caller=caller)
         raise upstream_error(exc) from exc
     return [r.__dict__ for r in results]
 
@@ -408,6 +423,7 @@ def jira_read(
     try:
         result = tool.get_issue(process_id, issue_key=body.issue_key, caller=caller)
     except Exception as exc:
+        tool.record_failure(process_id, f"Read Jira issue {body.issue_key} failed: {exc}", caller=caller)
         raise upstream_error(exc) from exc
     return result.__dict__
 

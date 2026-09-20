@@ -32,7 +32,7 @@ from apm_connectors.tools.salesforce_tool import SalesforceTool
 from tests.test_calendar_tool import FakeCalendarClient
 from tests.test_drive_tool import FOLDER_ID, FakeDriveClient
 from tests.test_excel_file_tool import FakeWorkbookSource, _sample_workbook_bytes
-from tests.test_gmail_tool import FakeGmailClient, _raw_message
+from tests.test_gmail_tool import BrokenGmailClient, FakeGmailClient, _raw_message
 from tests.test_jira_tool import FakeJiraClient, _raw_issue
 from tests.test_salesforce_tool import FakeSalesforceClient, _raw_record
 
@@ -614,3 +614,28 @@ def test_read_routes_attribute_the_authenticated_caller(tmp_path: Path) -> None:
     events = [e for e in store.list_events("order-21") if e["event_type"] == "read"]
     assert len(events) == 1
     assert events[0]["caller"] == "alice"
+
+
+def test_read_route_failure_is_logged_as_action_failed(tmp_path: Path) -> None:
+    """A real connector failure on a read route (a network error, an
+    upstream 5xx -- simulated here via BrokenGmailClient) must leave an
+    "action_failed" audit row, not just surface as a 502 with nothing
+    recorded -- see tools/base.py's record_failure and this route's own
+    call site in tools_routes.py.
+    """
+    store = StateStore(tmp_path / "state.json")
+    tools = {"gmail": GmailTool(store, BrokenGmailClient())}
+    action_graph = build_action_graph(tools, store, checkpointer=MemorySaver())
+
+    app = create_app()
+    app.dependency_overrides[get_tools] = lambda: tools
+    app.dependency_overrides[get_action_graph] = lambda: action_graph
+    app.dependency_overrides[get_state_store] = lambda: store
+    client = TestClient(app)
+
+    response = client.post("/tools/gmail/search", json={"process_id": "order-22", "query": "renewal"})
+
+    assert response.status_code == 502
+    events = store.list_events("order-22")
+    failed_event = next(e for e in events if e["event_type"] == "action_failed")
+    assert "simulated API failure" in failed_event["summary"]
