@@ -99,6 +99,10 @@ async def test_lists_one_tool_per_tools_route(tmp_path: Path) -> None:
         "jira_read",
         "jira_create",
         "jira_update",
+        "drive_list",
+        "drive_read",
+        "drive_upload",
+        "drive_update",
         "decide_action",
     }
 
