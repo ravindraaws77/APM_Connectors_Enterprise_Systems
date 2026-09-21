@@ -23,11 +23,14 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse, PlainTextResponse
 
-from apm_connectors.api.dependencies import get_action_graph, get_state_store, require_caller
+from apm_connectors.api.dependencies import get_action_graph, get_state_store, get_tools, require_caller
+from apm_connectors.api.metrics import render_metrics
 from apm_connectors.api.tools_routes import router as tools_router
 from apm_connectors.logging_config import configure_logging
 from apm_connectors.state.store import StateStoreProtocol
+from apm_connectors.tools.base import BaseTool
 
 logger = logging.getLogger("apm_connectors.api")
 
@@ -68,8 +71,27 @@ def create_app() -> FastAPI:
     async def _log_requests(request: Request, call_next):
         """Structured (JSON) access log -- separate from the audit trail,
         which only ever sees /tools/* calls a route chose to log, and
-        never sees timing or non-tools routes like /health."""
+        never sees timing or non-tools routes like /health.
+
+        Pulls `process_id` out of the request body when present (every
+        /tools/* route's request model carries one) so this log line
+        correlates with the same id apm_orchestrator now threads through
+        as case_id (see that repo's case_graph.py) -- not a full
+        distributed trace (no span propagation, no traceparent header),
+        but enough to join this server's own request log to the case
+        that caused it. `.json()` caches the body, so the route handler
+        downstream still reads it normally.
+        """
         start = time.monotonic()
+        process_id = None
+        if request.method == "POST":
+            try:
+                body = await request.json()
+            except Exception:
+                body = None
+            if isinstance(body, dict):
+                process_id = body.get("process_id")
+
         response = await call_next(request)
         duration_ms = round((time.monotonic() - start) * 1000, 1)
         logger.info(
@@ -79,13 +101,45 @@ def create_app() -> FastAPI:
                 "path": request.url.path,
                 "status_code": response.status_code,
                 "duration_ms": duration_ms,
+                **({"process_id": process_id} if process_id else {}),
             },
         )
         return response
 
     @app.get("/health")
-    def health() -> dict[str, str]:
-        return {"status": "ok"}
+    def health(
+        store: StateStoreProtocol = Depends(get_state_store),
+        tools: dict[str, BaseTool] = Depends(get_tools),
+    ) -> JSONResponse:
+        """Actually checks the two things "ok" claims: the state store
+        (Postgres in production; whatever `get_state_store` is overridden
+        to in tests) and every configured connector's own health_check().
+        A dead state store means this server genuinely can't serve
+        anything (no audit trail, no pending actions) -- that's a 503. An
+        unhealthy connector never is: many deployments only configure a
+        few connectors, and a load balancer pulling this whole instance
+        out of rotation over one flaky Jira credential would take down
+        every OTHER connector's traffic too, so that's surfaced as
+        "degraded" detail at 200 instead.
+        """
+        try:
+            store.list_processes()
+            store_ok = True
+        except Exception:
+            logger.error("health check: state store unreachable", exc_info=True)
+            store_ok = False
+
+        tool_status = {name: tool.health_check() for name, tool in tools.items()}
+        status = "ok" if store_ok and all(tool_status.values()) else "degraded" if store_ok else "unhealthy"
+        body = {"status": status, "state_store": store_ok, "tools": tool_status}
+        return JSONResponse(content=body, status_code=200 if store_ok else 503)
+
+    @app.get("/metrics", dependencies=_authenticated)
+    def metrics(
+        store: StateStoreProtocol = Depends(get_state_store),
+        tools: dict[str, BaseTool] = Depends(get_tools),
+    ) -> PlainTextResponse:
+        return PlainTextResponse(render_metrics(store, tools), media_type="text/plain; version=0.0.4")
 
     @app.get("/processes", dependencies=_authenticated)
     def list_processes(store: StateStoreProtocol = Depends(get_state_store)) -> list[dict]:
