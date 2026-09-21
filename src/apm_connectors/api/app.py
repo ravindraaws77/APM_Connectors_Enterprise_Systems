@@ -17,14 +17,19 @@ orchestration layer is expected to be deployed separately and call
 
 from __future__ import annotations
 
+import logging
+import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Request
 
 from apm_connectors.api.dependencies import get_action_graph, get_state_store, require_caller
 from apm_connectors.api.tools_routes import router as tools_router
+from apm_connectors.logging_config import configure_logging
 from apm_connectors.state.store import StateStoreProtocol
+
+logger = logging.getLogger("apm_connectors.api")
 
 # Every /processes/* route below sits behind require_caller too (never
 # /health -- a load balancer's health check carries no credentials). See
@@ -55,8 +60,28 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 
 def create_app() -> FastAPI:
+    configure_logging()
     app = FastAPI(title="APM Connectors & Enterprise Systems API", lifespan=_lifespan)
     app.include_router(tools_router)
+
+    @app.middleware("http")
+    async def _log_requests(request: Request, call_next):
+        """Structured (JSON) access log -- separate from the audit trail,
+        which only ever sees /tools/* calls a route chose to log, and
+        never sees timing or non-tools routes like /health."""
+        start = time.monotonic()
+        response = await call_next(request)
+        duration_ms = round((time.monotonic() - start) * 1000, 1)
+        logger.info(
+            "request",
+            extra={
+                "method": request.method,
+                "path": request.url.path,
+                "status_code": response.status_code,
+                "duration_ms": duration_ms,
+            },
+        )
+        return response
 
     @app.get("/health")
     def health() -> dict[str, str]:
