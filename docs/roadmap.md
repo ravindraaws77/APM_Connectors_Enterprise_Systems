@@ -179,6 +179,26 @@ a new policy + a different toolbelt subset, not new plumbing.
 - Per-external-system rate limiting/backpressure (Gmail, Salesforce,
   Jira all have their own quotas this API doesn't currently shield
   itself from).
+- **Observability (not started, either repo — audited 2026-09-22).**
+  What exists today is an audit trail, not observability: this repo's
+  `StateStoreProtocol` records who proposed/decided each action
+  (Phase 0, above) and is well covered by
+  `tests/test_state_store.py`/`test_postgres_state_store.py`, but
+  neither repo has structured application logging, a `/metrics`
+  endpoint, or any tracing integration. `apm_orchestrator` uses
+  `logging` in only 2 of ~10 source files; everywhere else (including
+  its CLI entry point) is bare `print()`, none of it asserted on by any
+  test. Retrofitting this after ECS autoscaling (above) is live is
+  harder than building it in now — scope before the rest of this phase
+  starts:
+  - Structured logging (replace `print()` calls; consistent fields —
+    request id, caller, latency — across both repos).
+  - A `/metrics` endpoint (this repo already has a real `/health`
+    endpoint to extend the pattern from) and a tracing integration
+    (e.g. OpenTelemetry — currently only present as a transitive
+    dependency via `langsmith`/`langchain-core`, not initialized by
+    either repo's own code).
+  - Dashboards/alerting on top of whichever metrics backend is chosen.
 
 **New repo:**
 - Scale the Supervisor and specialized agents independently (queue-based
@@ -205,6 +225,34 @@ a new policy + a different toolbelt subset, not new plumbing.
 
 ## Phase 5 — end-to-end business testing
 
+- **Agent evaluation (`apm_orchestrator`) — already ahead of this
+  phase (audited 2026-09-22).** Built as part of the Supervisor
+  confidence feature, ahead of any phase formally tracking it:
+  - **Done:** a versioned golden dataset
+    (`src/apm_orchestrator/evals/routing_cases.py`, four categories —
+    clear/adversarial/out_of_scope/ambiguous) and an eval harness
+    (`run_supervisor_routing_eval.py`) run against the real Claude API,
+    checking both delegate choice and confidence-vs-category. Turned
+    into individually-named, hard pytest assertions
+    (`tests/test_supervisor_routing_eval.py`), gated behind
+    `ANTHROPIC_API_KEY`, and run on a nightly schedule +
+    manual-dispatch CI job (`.github/workflows/eval.yml`) separate from
+    the fast/default test run (it makes ~20 real paid API calls).
+  - **Done:** ground-truth calibration tracking on top of the golden
+    dataset — the golden dataset only proves the model agrees with the
+    dataset author's own labels; `SupervisorRoutingLog.reviewed_correct`
+    (sampled via `scripts/review_routing_log.py`, reported via
+    `scripts/calibration_report.py`) proves whether "low" confidence
+    actually predicts a wrong routing on real traffic, which is the
+    claim that matters.
+  - **Gap:** the golden-dataset eval only runs nightly/on-demand, never
+    on a PR — a routing regression can sit undetected on `main` for up
+    to 24 hours. Consider a lighter, PR-gated subset of the golden
+    dataset once API cost allows.
+  - **Not applicable to this repo:** `apm_connectors` has no evaluation
+    harness by design — it's reasoning-free (per its own `CLAUDE.md`),
+    so there's no model behavior to evaluate here; noted so the
+    asymmetry between the repos reads as deliberate, not an oversight.
 - Golden-path workflows run against sandbox tenants (a real Gmail test
   account, Salesforce/Jira sandboxes) with real human approvals, not
   just `dry_run=True`.
