@@ -72,6 +72,20 @@ decision that unblocks `execute_node` must still be a real
 exactly as today. This holds regardless of how sophisticated the
 orchestration layer gets — see `docs/security-guardrails.md`.
 
+**Retrieval/knowledge stays out of this repo.** A retrieval index
+over documents (and any "knowledge agent" answering questions from it)
+belongs in `apm_orchestrator`
+(`KNOWLEDGE_AGENT_AND_RETRIEVAL_INDEX.md` there), not here. An index
+persists document text, which `docs/security-guardrails.md` §3 rules
+out for this repo. It also needs embedding and ranking model calls,
+and this repo makes none. It's also a derived copy that can go stale,
+unlike this repo's live reads from the system of record. This repo's
+role stays the same: its existing `/tools/drive/list` and
+`/tools/drive/read` read routes are how the orchestrator's indexer
+fetches source documents, audited like any other read. Give the
+indexer its own `APM_API_KEYS` entry so its reads are attributed
+separately.
+
 ## Phase 0 — harden this repo's seam first (blocking)
 
 Before any external repo/avatar/real users call this API in
