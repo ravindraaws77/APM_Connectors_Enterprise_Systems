@@ -267,6 +267,138 @@ a new policy + a different toolbelt subset, not new plumbing.
   inbound support email → drafted reply → calendar check → scheduled
   call → CRM update) before wider rollout.
 
+## Phase 6 — future builds: intelligent document processing + A2A
+
+**Status: planned, nothing built yet.** Two capabilities neither repo has
+today: *intelligent document processing* (IDP — reading a PO, contract,
+or onboarding pack and extracting structured, confidence-scored fields)
+and *agent-to-agent* (A2A) interoperability (an agent with its own
+reasoning, possibly owned by another team or vendor, called as a peer
+rather than as a tool).
+
+**Where each piece lives — the split doesn't move.** Document
+*extraction* is reasoning, so it belongs in `apm_orchestrator` (or a
+new A2A service alongside it), never in this repo. This repo's only
+part is reading the raw bytes (Drive already does, Gmail attachments
+would be new) and gating whatever write the extraction leads to. Every
+write that results from a document — from any agent, internal or
+external — still lands in this repo's approval queue and audit log.
+
+**MCP vs A2A, as this project uses them.** This repo's `/tools/*` API
+(and `apm_connectors_mcp`) is *agent-to-tool*: deterministic, no
+reasoning, every write approval-gated. A2A is *agent-to-agent*: the
+callee is itself a reasoning agent that publishes an Agent Card,
+accepts tasks, and returns task artifacts. A2A is for a specialist
+agent; an external system with no reasoning of its own stays an MCP/HTTP
+tool here.
+
+### 6.1 IDP — purchase-order intake (Order-Renewal agent)
+
+A customer emails a PO or signed renewal quote as a PDF, or it is
+dropped in the configured Drive folder (`APM_DRIVE_FOLDER_ID`).
+
+1. Read the document — `POST /tools/drive/read` (exists, returns
+   `content_base64`), or a new Gmail attachment read route (below).
+2. Extract account name, PO number, amount, currency, term start/end,
+   and signatory — **each with a per-field confidence score**.
+3. Reconcile against the Salesforce Opportunity the renewal case already
+   selects (`verify_account_node`'s normalized-name match and
+   `_closest_to_today` pick, per `apm_orchestrator`'s `CLAUDE.md` —
+   never an exact-string or `records[0]` shortcut).
+4. Match → propose `salesforce_update` (PO number, stage). Mismatch or
+   low-confidence field → propose `jira_create_issue` for a human to
+   reconcile. Both go through the approval gate as usual.
+
+Tolerances (amount delta, date drift) and the confidence threshold that
+routes a field to human review are `policy.yaml` data, not code.
+
+**This repo's piece:** a read-only Gmail attachment route — e.g.
+`POST /tools/gmail/attachments/list` (`{message_id}` → `[{attachment_id,
+filename, mime_type, size}]`) and `POST /tools/gmail/attachments/read`
+(`{message_id, attachment_id}` → `{filename, mime_type, size,
+content_base64}`). Additive (no existing route's shape changes), built
+via the `tool-integration` skill, registered in
+`docs/capability-map.md` and `docs/api-contract.md`. Needs a size cap
+and MIME allowlist (PDF, images, `.docx`) so an arbitrary attachment
+can't be pulled through.
+
+**Evaluation (`apm_orchestrator`):** a versioned golden set of sample
+POs (synthetic, no real customer data) with hand-labelled field values,
+scored per field — exact match for PO number, tolerance for amounts and
+dates. Same shape as the routing eval
+(`evals/routing_cases.py` + nightly `eval.yml`), and the same
+calibration idea as `SupervisorRoutingLog.reviewed_correct`: record a
+reviewer's verdict on extracted fields so "low confidence" can be shown
+to actually predict a wrong field on real documents.
+
+### 6.2 IDP — onboarding document pack (Customer-Onboarding agent)
+
+Extract and check an onboarding/KYC-style pack: certificate of
+incorporation, proof of address, signed contract, director IDs.
+
+- A checklist in `customer_onboarding/policy.yaml`: which documents are
+  required, maximum document age/expiry, and which extracted names must
+  match the Salesforce Account/Contact (normalized-name match, same rule
+  as Order-Renewal).
+- Missing, expired, or mismatched document → propose a request email
+  (`gmail_send`) listing exactly what's needed; approval-gated.
+- Complete pack → continue the existing onboarding case graph
+  (kickoff call, welcome notice, ticket, record update).
+- Identity documents are high-sensitivity PII: extracted values are
+  stored minimally (pass/fail + reference, not full ID numbers) and
+  covered by Phase 4's PII/retention policy before any real pack is
+  processed.
+
+### 6.3 A2A — document extraction as its own agent
+
+Split 6.1/6.2's extraction out of each business agent into a standalone
+**document-extraction agent** exposed over A2A, which Order-Renewal and
+Customer-Onboarding both call instead of extracting in-process.
+
+- Publishes an **Agent Card** (skills: `extract_purchase_order`,
+  `extract_onboarding_pack`; input/output schemas; auth requirements).
+- Accepts a task with the document bytes (fetched by the *calling*
+  agent from this repo's read routes — the extraction agent gets no
+  connector credentials of its own) and returns extracted fields +
+  per-field confidence as **task artifacts**.
+- Low-confidence extraction → the A2A task moves to **`input-required`**,
+  which the calling case graph treats as a human-review checkpoint
+  (a LangGraph interrupt, like `wait_for_approval`) — distinct from, and
+  never a substitute for, this repo's write-approval gate.
+- Owns the golden-set eval from 6.1, so extraction quality is measured
+  once, not per business agent.
+- Lives in `apm_orchestrator` (e.g. `src/apm_orchestrator/a2a/`) or a
+  third repo/service if it needs to scale or ship independently — decide
+  when building it, not before.
+
+### 6.4 A2A — third-party agent behind the approval gate
+
+An external agent (e.g. a vendor's credit-check or sanctions-screening
+agent) connected over A2A.
+
+- It may **propose**; it can **never approve**. Its proposals reach this
+  repo only through an orchestrator agent's normal write routes, under
+  its own API key/identity (so `proposed_by` names it in the audit log),
+  and the decision route stays human-only per `CLAUDE.md` in both repos.
+- Everything it returns is **untrusted input** — schema-validated, never
+  concatenated into a prompt as instructions — per Phase 4's
+  prompt-injection defenses at every agent handoff.
+- Every A2A exchange (task sent, artifacts received, state transitions)
+  is audit-logged alongside the connector events, with the remote
+  agent's identity.
+- Depends on Phase 4's mTLS/OIDC work: no external agent is trusted by
+  network position.
+
+### Suggested build order
+
+1. **6.3 + 6.1 together** (first build): the A2A extraction agent, called
+   by Order-Renewal for PO reconciliation, plus the golden-set eval.
+   Uses connectors that already exist (Drive read, Salesforce, Jira); the
+   Gmail attachment route is optional for this first slice.
+2. **Gmail attachment read route** in this repo, for the email-in path.
+3. **6.2**, reusing the extraction agent with a new skill.
+4. **6.4**, once Phase 4's auth and injection defenses are in place.
+
 ## Rough timeline
 
 Assuming a small team (2-4 engineers) and phases 1-4 overlapping
