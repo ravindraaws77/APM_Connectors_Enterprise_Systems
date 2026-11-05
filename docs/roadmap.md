@@ -269,12 +269,26 @@ a new policy + a different toolbelt subset, not new plumbing.
 
 ## Phase 6 — future builds: intelligent document processing + A2A
 
-**Status: planned, nothing built yet.** Two capabilities neither repo has
-today: *intelligent document processing* (IDP — reading a PO, contract,
-or onboarding pack and extracting structured, confidence-scored fields)
-and *agent-to-agent* (A2A) interoperability (an agent with its own
-reasoning, possibly owned by another team or vendor, called as a peer
-rather than as a tool).
+**Status: 6.1 + 6.3 first slice built in `apm_orchestrator`
+(2026-11-05); 6.2, 6.4 and the Gmail attachment route not started.**
+Two capabilities this phase adds: *intelligent document processing*
+(IDP — reading a PO, contract, or onboarding pack and extracting
+structured, confidence-scored fields) and *agent-to-agent* (A2A)
+interoperability (an agent with its own reasoning, possibly owned by
+another team or vendor, called as a peer rather than as a tool).
+
+What the first slice covers (see `apm_orchestrator`'s README, "Purchase-
+order intake"): the document-extraction agent as a real A2A server
+(official `a2a-sdk`, Agent Card, `input-required` review loop, optional
+bearer auth); Order-Renewal PO intake from Drive with reconciliation
+and approval-gated Salesforce-update / Jira-ticket proposals; and an
+8-case synthetic golden set with per-field scoring and a calibration
+report, run nightly. Not yet done: a live eval run against the real
+model and a live end-to-end run against real Drive/Salesforce/Jira,
+durable A2A task storage (tasks, including the document, live in the
+agent's memory today), and the email-in path. No change to this repo
+was needed — PO intake uses the existing `/tools/drive/read`,
+`/tools/salesforce/update` and `/tools/jira/create` routes.
 
 **Where each piece lives — the split doesn't move.** Document
 *extraction* is reasoning, so it belongs in `apm_orchestrator` (or a
