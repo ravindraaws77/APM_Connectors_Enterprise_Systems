@@ -399,6 +399,45 @@ agent) connected over A2A.
 3. **6.2**, reusing the extraction agent with a new skill.
 4. **6.4**, once Phase 4's auth and injection defenses are in place.
 
+## Phase 7 — reflection on LLM-drafted content (pre-approval self-review)
+
+**Status: planned, not yet prioritized.** Came out of comparing APM with
+the "reflection" design pattern (generate → critique → revise) from
+Andrew Ng's Agentic AI course. Today nothing reviews an LLM-drafted
+artifact (a renewal notice, a Jira ticket body, an onboarding email)
+before it reaches a human approver, so every drafting mistake costs the
+reviewer's time.
+
+**Where it lives — the split doesn't move.** Reflection is reasoning, so
+it belongs in `apm_orchestrator`, in the LLM judgment steps
+(`agent.py`-style Claude Agent SDK calls), never in this repo and never
+inside a case graph's deterministic nodes. Its output is still only a
+*proposal*: it lands in this repo's approval queue like any other write.
+
+**Shape:**
+
+- **draft → critique → revise → propose.** One bounded critique pass per
+  draft (a max-iterations cap, not an open loop), run before the
+  proposal is created.
+- **Ground the critic in data, not just the draft text.** The critique
+  prompt gets the agent's `policy.yaml` rules plus the records actually
+  read from Salesforce/Jira (Account name, CloseDate, blocking tickets),
+  and checks the draft against them. An ungrounded self-critique would
+  have approved every silent failure in `FAILURES_AND_LESSONS_LEARNED.md`
+  (trailing-period account names, placeholder Jira keys, oldest-not-
+  closest Opportunity) — they all looked plausible.
+- **Generator/critic model split.** A cheaper model drafts, a stronger
+  one critiques. Both pinned with explicit `model` and `max_budget_usd`
+  per the orchestrator's `CLAUDE.md`.
+- **Never a substitute for approval.** A critic that "passes" a draft
+  doesn't skip, shorten or pre-fill the human decision.
+- **Make it visible to the approver.** Attach the critic's feedback and
+  the V1→V2 diff to the proposal so the reviewer sees what changed.
+- **Measure it.** Track the human rejection/edit rate of proposals with
+  vs. without reflection on a golden set (same approach as the
+  Supervisor routing evals); keep it only if it reduces rejections
+  enough to justify the extra cost and latency.
+
 ## Rough timeline
 
 Assuming a small team (2-4 engineers) and phases 1-4 overlapping
