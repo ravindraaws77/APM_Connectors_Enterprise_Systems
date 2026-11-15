@@ -405,3 +405,45 @@ Assuming a small team (2-4 engineers) and phases 1-4 overlapping
 rather than strictly sequential: **~14-16 weeks (3.5-4 months)** to a
 real production v1 across both repos. Phase 0 is a hard blocker and
 should land in the first 1-2 weeks.
+
+## Build schedule: Nov 2026 – Apr 2027 (paced with a learning track)
+
+**Status: planned, 15 Nov 2026.** A solo, part-time schedule (the
+"Rough timeline" above assumes a 2-4 engineer team) that sequences the
+phases above alongside two courses: DeepLearning.AI's *Agentic AI*
+(Andrew Ng; self-paced, ~8 hours) and the JHU *Certificate Program in
+Agentic AI — Code Track* (Nov 2026 cohort, three graded projects). Each
+course block is paired with the APM work it most directly exercises, so
+course projects ship as real APM features instead of throwaway
+exercises. Course project submissions use **synthetic data only**, never
+records from a real Gmail/Salesforce/Jira tenant.
+
+The goal is not just more features but **more robust AI behaviour**:
+every new LLM-driven step lands with its own eval, a confidence signal a
+human can review, and untrusted-input handling, following the patterns
+`apm_orchestrator` already proved out for Supervisor routing (golden
+dataset → nightly eval → `reviewed_correct` calibration).
+
+| When | Learning | APM build | Repo | Done when |
+|---|---|---|---|---|
+| **15–21 Nov** | Ng *Agentic AI* (reflection, tool use, planning, multi-agent, evals/error analysis) | Error analysis on the existing routing eval + calibration batch: list where the Supervisor or case graphs fail and why | orchestrator | A written list of failure categories, each with an eval case or a ticket |
+| **22 Nov – 20 Dec** | JHU wk 0–2: Python, AI-assisted coding, LLMs + prompting | **Phase 3 observability, first slice:** structured logging (replace `print()`, request id / caller / latency fields) in both repos. **Phase 5 gap:** a small PR-gated subset of the routing golden set in CI | both | No bare `print()` in library code; routing subset runs on every PR |
+| **21 Dec – 4 Jan** (JHU break) | — | **6.1 prerequisites:** Gmail attachment read routes (`/tools/gmail/attachments/list` + `/read`, size cap + MIME allowlist, via the `tool-integration` skill). Start the synthetic PO golden set (20–30 documents, hand-labelled) | connectors, orchestrator | Routes in `api-contract.md` + `capability-map.md`, dry-run tested |
+| **5–31 Jan** → JHU Project 1 (due 31 Jan) | JHU wk 3–5: RAG, prompt optimization + evaluation | **6.1 PO extraction:** per-field confidence, 2–3 prompt variants compared on the golden set, contract lookup from the Drive folder for reconciliation. Read-only: proposes nothing yet | orchestrator | Per-field accuracy report per prompt variant; nightly eval job extended |
+| **1 Feb – 7 Mar** → JHU Project 2 (due 7 Mar) | JHU wk 7–10: agentic core concepts, single-agent systems, ethics + safety | **6.2 onboarding pack** on the Customer-Onboarding agent (checklist in `policy.yaml`, missing/expired doc → approval-gated `gmail_send`). **Phase 4 slice:** prompt-injection defences on email/document text, PII minimisation (pass/fail + reference, never full ID numbers). First live run of a case graph against sandbox tenants | orchestrator | Injection test cases pass; responsible-AI design note written; live run recorded in `FAILURES_AND_LESSONS_LEARNED.md` |
+| **8 Mar – 11 Apr** → JHU Project 3 (due 11 Apr) | JHU wk 12–14: multi-agent systems, evaluation of agentic systems | **6.3 A2A extraction agent** (Agent Card, `input-required` → human-review interrupt) called by both Order-Renewal and Customer-Onboarding. **Whole-case evals:** score a case graph's end state and proposed writes, not just routing. OpenTelemetry tracing across Supervisor → agent → connectors | orchestrator (+ connectors for tracing) | Both agents use the shared extractor; case-level eval in nightly CI; one trace spans both repos |
+| **Apr – Jun** (after JHU) | JHU self-paced: fine-tuning small models, Claude-based workflows; Anthropic masterclass (10 Apr) | Small-model router experiment scored against the routing golden set (cost vs accuracy). Next business agent (Churn Prevention). Remaining Phase 3 (HTTPS, ECS autoscaling, per-system rate limiting) and 6.4 once Phase 4 auth is in place | both | Router comparison written up; new agent has its own golden set from day one |
+
+**Rules that carry across every row:**
+- A new LLM step doesn't ship without a golden set, a nightly eval, and
+  a confidence field a reviewer can sample — the same shape as
+  `evals/routing_cases.py` + `SupervisorRoutingLog.reviewed_correct`.
+- Text from email, documents, or another agent is untrusted input:
+  schema-validated, never treated as instructions.
+- The approval boundary never moves: no course project, demo, or new
+  agent calls `POST /tools/actions/{id}/decision`.
+- Every new `ClaudeAgentOptions` call site pins `model` and
+  `max_budget_usd` from config (see `apm_orchestrator`'s `CLAUDE.md`).
+- "Done" means live-verified against a sandbox, not just green unit
+  tests; anything learned the hard way goes into
+  `apm_orchestrator`'s `FAILURES_AND_LESSONS_LEARNED.md`.
