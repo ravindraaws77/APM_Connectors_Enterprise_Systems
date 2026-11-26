@@ -84,6 +84,30 @@ No auth is needed for any of this by default — see
 `docs/api-contract.md`'s "Auth is opt-in" for when to set
 `APM_API_KEYS` (not something local dev needs).
 
+## Run a test server (for apm_orchestrator's live tests)
+
+apm_orchestrator's `tests/test_case_graph_mechanics.py` and
+`scripts/e2e_smoke.py` need a real running server to talk to. Start one
+with test configuration only:
+
+```
+python scripts/start_test_server.py
+```
+
+Whatever `.env` says, that server always: uses a local test workbook
+(`state/test/test_workbook.xlsx` by default, created with a `Renewals`
+sheet on first run and gitignored) and ignores `APM_EXCEL_DRIVE_FILE_ID`;
+turns off Gmail/Calendar, Drive, Salesforce and Jira, so it can't reach
+a real external system; uses two test API keys (`orch-key` for the
+orchestrator, `approver-key` for the human approver); and listens on
+`127.0.0.1:8123`, clear of a normal `:8000` server. `.env` is never
+modified, and everything else in it (`DATABASE_URL` in particular) is
+used as usual. The optional `APM_TEST_*` entries in `.env.example`
+change the workbook folder and file name, the keys, or point the test
+server at a separate database (`APM_TEST_SERVER_DATABASE_URL`) so its
+records stay out of your real audit history. Then run the tests from
+apm_orchestrator with its `scripts/run_live_tests.py`.
+
 ## Run the MCP server (for an LLM-based agent)
 
 An alternative to a reasoning layer calling `/tools/*` directly over
