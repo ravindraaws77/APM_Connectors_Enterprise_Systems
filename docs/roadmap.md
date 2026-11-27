@@ -577,6 +577,35 @@ execution.
 | 5 | UC4 account risk questions | Planning, read-only | Feb – Mar |
 | 6 | UC6 pipeline reports via code | Planning with code | After Phase 4 |
 
+## Phase 8 — production durability patterns (from The Neural Maze course)
+
+Source: The Neural Maze, "Production AI Agents Full Course | Durable
+Graph Agents from Scratch" (6 lessons, Nov 2026). The course builds a
+separate app, but six of its patterns fill real gaps in APM. Each item
+below is small, testable offline, and keeps the existing rules: no
+write without human approval, policy as data, and every action in the
+state store.
+
+| ID | Pattern | What it means for APM | Where | When |
+| --- | --- | --- | --- | --- |
+| D1 | Idempotent writes | Every approved write executes at most once. First prove the current behaviour with a regression test: a second decision call on the same `action_id` must not execute again (the action graph has already finished, so it should return the stored result). Then cover the harder case, a timeout after the external system already applied the write: record the external id (message id, record id, issue key) and check it before any retry; use a provider idempotency or external-id field where one exists. | apm_connectors `graph.py` execute node + state store | Sprint week 4 |
+| D2 | Context snapshot per answer | Store what each RAG answer and agent decision saw: question, retrieved chunks (ids + versions), answer, citations. A wrong answer can then be diagnosed as ingestion, retrieval or generation. | apm_orchestrator RAG runtime + case graph | Sprint week 2 (feeds UC1/UC3) |
+| D3 | Failures as data | Every failed node, tool call or connector error is written to a failures table with its case id, step and error type, for error analysis. | Both repos (state store / case graph) | Sprint week 2 |
+| D4 | Error analysis before judges | Read 20+ real traces, note the first thing that went wrong, group into named failure modes, count them. Code checks first; then one pass/fail judge per failure mode that writes its critique before the verdict, trusted only when it catches ≥ 0.9 of bad answers and passes ≥ 0.9 of good ones against human labels. | apm_orchestrator `evals/` — this is UC1's reviewer and UC3 | Sprint week 2 |
+| D5 | Hybrid retrieval with RRF | Add pgvector embeddings next to the existing BM25 index and fuse with reciprocal rank fusion (k ≈ 60); measure hit@5 for BM25, dense, and fused on the RAG eval. | apm_orchestrator `rag/` | Sprint week 3 |
+| D6 | Flow control | Concurrency limited per connector (not one global limit), throttling under Anthropic/Salesforce/Jira rate limits, and priority so manual cases run before batch work. | apm_connectors routes + orchestrator poller | After the sprint (Jan) |
+| D7 | Document versions | When a source document changes (content hash), close old chunks with `valid_to = now`; search reads only `valid_to IS NULL`; snapshots keep the version an old answer used. | apm_orchestrator `rag/` | Jan |
+
+**Separate portfolio app (after the sprint): "Ravi KB".** Build the
+course's full stack as its own repo rather than inside APM, so APM
+keeps its approval-gated enterprise story and the second project shows
+breadth: durable ingestion of Ravi_KA docs, newsletters and the APM
+repos; hybrid + graph retrieval with a locked ontology; MCP read tools
+(`kb_search`) and a write tool (`kb_propose_update`) that goes through
+a human approval step; background evals; a durable research agent.
+Follow the course's week-N tags. Target: Jan – Feb 2027. Personal
+documents stay out of the repo; tests and evals use synthetic data.
+
 ## Rough timeline
 
 Assuming a small team (2-4 engineers) and phases 1-4 overlapping
