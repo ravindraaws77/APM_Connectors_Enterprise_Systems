@@ -45,7 +45,7 @@ SDK required.
 
 This repo ships `apm_connectors_mcp` — an MCP server that exposes every
 route above as an agent tool, so Claude can call `gmail_search`,
-`gmail_send`, `calendar_create_event`, `decide_action`, etc. directly,
+`gmail_send`, `calendar_create_event`, `action_status`, etc. directly,
 translating a free-text request into the right call itself. It's a
 thin HTTP client over the same API — no separate deployment of the
 connector logic needed.
@@ -88,9 +88,12 @@ connector logic needed.
    itself.
 
 The approval gate applies exactly the same way here: Claude proposing
-`gmail_send` doesn't send anything — it gets back a paused `action_id`
-and has to call `decide_action` with `approved=true` to actually send
-it, same as any other caller.
+`gmail_send` doesn't send anything — it gets back a paused `action_id`.
+The MCP server deliberately has **no tool to approve or reject** that
+action, so Claude can't approve its own writes. A person approves or
+rejects it through the review surface (or a direct
+`POST /tools/actions/{action_id}/decision` call made by that person),
+and Claude can check progress with the read-only `action_status` tool.
 
 ## Known limitations to plan around
 

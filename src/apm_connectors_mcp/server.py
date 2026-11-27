@@ -16,14 +16,17 @@ running elsewhere:
 
 Every write tool (gmail_send, calendar_create_event, excel_write,
 drive_upload, drive_update, salesforce_create, salesforce_update,
-jira_create, jira_update) mirrors
-the REST API exactly: it does not execute anything -- it
-returns a paused action_id, and the agent must call
-decide_action(action_id, approved=True) to actually run it. That gate
-is enforced server-side in the /tools/* API regardless of what this
-MCP layer does, so it can't be bypassed by a misbehaving or
-adversarial agent -- this module is a description/transport
-convenience on top of it, not a second copy of the guardrail.
+jira_create, jira_update) mirrors the REST API exactly: it does not
+execute anything -- it returns a paused action_id. This server
+deliberately has NO tool that approves or rejects that action: the
+decision route (POST /tools/actions/{action_id}/decision) belongs to a
+human, through a human-facing review surface, never to the agent that
+proposed the write. An agent that could call it would be approving its
+own writes, which is exactly what this package's non-negotiable rule
+forbids (CLAUDE.md, docs/security-guardrails.md). The agent can only
+check an action's progress with the read-only action_status tool.
+tests/test_mcp_server.py's test_no_tool_can_decide_an_action guards
+this -- don't add a decide/approve tool back.
 
 Tool descriptions below are deliberately detailed (Gmail's query
 syntax, RFC3339 datetime format, action_id vs. process_id) -- this is
@@ -86,10 +89,9 @@ def build_server(client: ConnectorClient, name: str = "apm-connectors") -> MCPSe
     @mcp.tool()
     async def gmail_send(to: str, subject: str, body: str, process_id: str | None = None) -> dict[str, Any]:
         """Propose sending a Gmail email. This does NOT send anything
-        -- it pauses for human approval and returns action_id in the
-        response. Call decide_action with that action_id and
-        approved=true to actually send it, or approved=false to
-        discard it; nothing goes out either way until that call.
+        -- it pauses for human approval and returns action_id. A human approves or rejects it
+        outside this agent; check progress with action_status(action_id).
+        Nothing goes out unless a human approves it.
         """
         return await _call(
             "/tools/gmail/send", {"to": to, "subject": subject, "body": body, "process_id": process_id}
@@ -140,8 +142,8 @@ def build_server(client: ConnectorClient, name: str = "apm-connectors") -> MCPSe
         """Propose creating a single (non-recurring) Calendar event.
         `start`/`end` are RFC3339 datetimes (e.g.
         "2026-09-10T15:00:00Z"). This does NOT create anything -- it
-        pauses for approval and returns action_id; call decide_action
-        to resolve it.
+        pauses for approval and returns action_id. A human approves or rejects it
+        outside this agent; check progress with action_status(action_id).
         """
         return await _call(
             "/tools/calendar/create-event",
@@ -183,8 +185,8 @@ def build_server(client: ConnectorClient, name: str = "apm-connectors") -> MCPSe
     ) -> dict[str, Any]:
         """Propose overwriting a cell range, e.g. address="A1:B2",
         values=[["x", "y"], ["1", "2"]]. This does NOT write anything
-        -- it pauses for approval and returns action_id; call
-        decide_action to resolve it.
+        -- it pauses for approval and returns action_id. A human approves or rejects it
+        outside this agent; check progress with action_status(action_id).
         """
         return await _call(
             "/tools/excel/write",
@@ -223,8 +225,8 @@ def build_server(client: ConnectorClient, name: str = "apm-connectors") -> MCPSe
     ) -> dict[str, Any]:
         """Propose uploading a new file (base64-encoded content_base64)
         into the configured Drive folder. This does NOT upload anything
-        -- it pauses for human approval and returns action_id; call
-        decide_action to resolve it.
+        -- it pauses for human approval and returns action_id. A human approves or rejects it
+        outside this agent; check progress with action_status(action_id).
         """
         return await _call(
             "/tools/drive/upload",
@@ -236,7 +238,8 @@ def build_server(client: ConnectorClient, name: str = "apm-connectors") -> MCPSe
         """Propose replacing an existing Drive file's contents with new
         base64-encoded bytes (file_id from drive_list's results). This
         does NOT change anything -- it pauses for approval and returns
-        action_id; call decide_action to resolve it. Refuses if the
+        action_id. A human approves or rejects it outside this agent;
+        check progress with action_status(action_id). Refuses if the
         file isn't inside the configured folder.
         """
         return await _call(
@@ -271,9 +274,8 @@ def build_server(client: ConnectorClient, name: str = "apm-connectors") -> MCPSe
         """Propose creating a new Salesforce record, e.g.
         object_name="Lead", fields={"LastName": "Doe", "Company": "Acme"}.
         This does NOT create anything -- it pauses for human approval and
-        returns action_id in the response. Call decide_action with that
-        action_id and approved=true to actually create it, or
-        approved=false to discard it.
+        returns action_id. A human approves or rejects it
+        outside this agent; check progress with action_status(action_id).
         """
         return await _call(
             "/tools/salesforce/create", {"object_name": object_name, "fields": fields, "process_id": process_id}
@@ -286,8 +288,8 @@ def build_server(client: ConnectorClient, name: str = "apm-connectors") -> MCPSe
         """Propose updating an existing Salesforce record's fields, e.g.
         object_name="Opportunity", record_id="006...",
         fields={"StageName": "Closed Won"}. This does NOT update anything
-        -- it pauses for approval and returns action_id; call
-        decide_action to resolve it.
+        -- it pauses for approval and returns action_id. A human approves or rejects it
+        outside this agent; check progress with action_status(action_id).
         """
         return await _call(
             "/tools/salesforce/update",
@@ -320,9 +322,8 @@ def build_server(client: ConnectorClient, name: str = "apm-connectors") -> MCPSe
         `fields` payload as-is, e.g. {"project": {"key": "OPS"},
         "summary": "Fix the thing", "issuetype": {"name": "Bug"}}. This
         does NOT create anything -- it pauses for human approval and
-        returns action_id in the response. Call decide_action with that
-        action_id and approved=true to actually create it, or
-        approved=false to discard it.
+        returns action_id. A human approves or rejects it
+        outside this agent; check progress with action_status(action_id).
         """
         return await _call("/tools/jira/create", {"fields": fields, "process_id": process_id})
 
@@ -331,25 +332,45 @@ def build_server(client: ConnectorClient, name: str = "apm-connectors") -> MCPSe
         """Propose updating an existing Jira issue's fields, e.g.
         issue_key="OPS-42", fields={"summary": "Updated title"}. This
         does NOT update anything -- it pauses for approval and returns
-        action_id; call decide_action to resolve it.
+        action_id. A human approves or rejects it outside this agent;
+        check progress with action_status(action_id).
         """
         return await _call(
             "/tools/jira/update", {"issue_key": issue_key, "fields": fields, "process_id": process_id}
         )
 
-    # -- Shared decision route for every write above -------------------------
+    # -- Read-only progress check for every write above -------------------
+    # There is intentionally no decide/approve tool here -- see the module
+    # docstring. Approval is a human's call, made outside this agent.
 
     @mcp.tool()
-    async def decide_action(action_id: str, approved: bool) -> dict[str, Any]:
-        """Approve or reject a pending write proposed by gmail_send,
-        calendar_create_event, excel_write, drive_upload/update,
-        salesforce_create/update, or jira_create/update (its action_id
-        from that call's response).
-        Nothing in the real system happens until this is called with
-        approved=true; approved=false discards it -- nothing is
-        sent/created/written either way.
+    async def action_status(action_id: str) -> dict[str, Any]:
+        """Read-only: the current status of a write proposed by
+        gmail_send, calendar_create_event, excel_write, drive_upload/
+        update, salesforce_create/update or jira_create/update -- pass
+        the top-level action_id from that call's response. Use it to see
+        whether a human has approved, rejected or not yet decided the
+        action. This tool cannot approve or reject anything.
+
+        Returns {"action_id", "state", ...}: state is
+        "awaiting_human_decision" while the action is still pending,
+        otherwise the process's recorded stage (e.g. "done") with its
+        result. Pending entries carry only tool and description, not
+        the store's internal row id, so that id can't be mistaken for
+        the action_id.
         """
-        return await _call(f"/tools/actions/{action_id}/decision", {"approved": approved})
+        try:
+            pending = await client.get(f"/processes/{action_id}/pending")
+            if pending:
+                return {
+                    "action_id": action_id,
+                    "state": "awaiting_human_decision",
+                    "pending": [{"tool": p.get("tool"), "description": p.get("description")} for p in pending],
+                }
+            status = await client.get(f"/processes/{action_id}/status")
+        except ConnectorAPIError as exc:
+            raise ToolError(str(exc)) from exc
+        return {"action_id": action_id, "state": status.get("stage"), "result": status.get("result")}
 
     return mcp
 
