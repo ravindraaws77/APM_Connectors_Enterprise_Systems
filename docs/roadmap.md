@@ -596,15 +596,17 @@ state store.
 | D6 | Flow control | Concurrency limited per connector (not one global limit), throttling under Anthropic/Salesforce/Jira rate limits, and priority so manual cases run before batch work. | apm_connectors routes + orchestrator poller | After the sprint (Jan) |
 | D7 | Document versions | When a source document changes (content hash), close old chunks with `valid_to = now`; search reads only `valid_to IS NULL`; snapshots keep the version an old answer used. | apm_orchestrator `rag/` | Jan |
 
-**Separate portfolio app (after the sprint): "Ravi KB".** Build the
-course's full stack as its own repo rather than inside APM, so APM
-keeps its approval-gated enterprise story and the second project shows
-breadth: durable ingestion of Ravi_KA docs, newsletters and the APM
-repos; hybrid + graph retrieval with a locked ontology; MCP read tools
-(`kb_search`) and a write tool (`kb_propose_update`) that goes through
-a human approval step; background evals; a durable research agent.
-Follow the course's week-N tags. Target: Jan – Feb 2027. Personal
-documents stay out of the repo; tests and evals use synthetic data.
+**Separate portfolio app: "AI Career Brain".** Built as its own repo,
+not inside APM, following the same course week by week but with its own
+data and use case: AI engineering job postings (public job-board APIs,
+careers pages, pasted postings), AI newsletters, and personal learning
+notes, answering questions like "which skills do Dublin FDE roles ask
+for that I haven't built?". Durable ingestion, hybrid + graph retrieval
+with a locked career ontology (Role, Skill, Company, Claim, evidence),
+MCP read tools plus approval-gated write tools, validated evals, a
+research agent, and AWS deployment. Personal notes never enter the
+repo; tests use synthetic data. The design lives in the owner's private
+notes; start date to decide (January, or Saturdays during the sprint).
 
 ## Rough timeline
 
