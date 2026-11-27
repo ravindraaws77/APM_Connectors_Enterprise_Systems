@@ -227,20 +227,20 @@ story.append(bl(
 
 story.append(h2("0.10 A local import inside a function body"))
 story.append(code_block(
-    "def get_state_store():\n"
-    "    if settings.database_url:\n"
-    "        from apm_connectors.state.postgres_store import PostgresStateStore   # imported HERE, not at the top of the file\n"
-    "        return PostgresStateStore(...)\n"
-    "    return StateStore()\n"
+    "@lru_cache\n"
+    "def get_state_store() -> StateStoreProtocol:\n"
+    "    _require_database_url()\n"
+    "    from apm_connectors.state.postgres_store import PostgresStateStore   # imported HERE, not at the top of the file\n\n"
+    "    return PostgresStateStore(_get_postgres_pool())\n"
 ))
 story.append(bl(
     "Imports usually live at the very top of a file, but here's one deliberately placed inside the "
-    "function instead. This delays loading the Postgres driver until this exact line actually runs — "
-    "which only happens if <font name='Courier'>DATABASE_URL</font> is set. Without this, importing "
-    "<font name='Courier'>apm_connectors.api.dependencies</font> at all would require the Postgres "
-    "driver to be installed, even for a deployment that never sets "
-    "<font name='Courier'>DATABASE_URL</font> and only wants the zero-infrastructure file-backed "
-    "default (§2.3). You'll see this same local-import pattern again for the same reason."
+    "function instead. This delays loading the Postgres driver until this exact line actually runs. "
+    "The running server always needs Postgres (§2.3), but plenty of code imports "
+    "<font name='Courier'>apm_connectors.api.dependencies</font> without ever running the server: "
+    "the unit tests, which override this function with an in-memory fake, and the MCP server package. "
+    "A top-of-file import would force all of them to install the Postgres driver for nothing. You'll "
+    "see this same local-import pattern again for the same reason."
 ))
 
 story.append(rule())
@@ -286,7 +286,8 @@ story.append(bl(
     "<font name='Courier'>@app.put</font>, <font name='Courier'>@app.delete</font>, etc. Whatever you "
     "<font name='Courier'>return</font> — a dict, a list, a Pydantic model — FastAPI serializes to "
     "JSON automatically. This decorator pattern is the entire routing mechanism: there's no separate "
-    "URL-config file to maintain, the route lives right next to the function that handles it."
+    "URL-config file to maintain, the route lives right next to the function that handles it. (This "
+    "repo's real <font name='Courier'>/health</font> does more than return a constant — §2.5.)"
 ))
 
 story.append(h2("1.3 Getting data in: path params, query params, request body"))
@@ -423,16 +424,17 @@ story.append(rule())
 story.append(h1("Part 2 — This repo's FastAPI layer, file by file"))
 
 story.append(bl(
-    "src/apm_connectors/api/ has five files. Read them in this order — each one only makes sense "
+    "src/apm_connectors/api/ has six files. Read them in this order — each one only makes sense "
     "once you've seen the one before it:"
 ))
 layout_rows = [
     ["<b>File</b>", "<b>Lines</b>", "<b>Role</b>"],
-    ["schemas.py", "148", "Pydantic request/response models — the request-body shape for every route."],
-    ["dependencies.py", "133", "Builds the shared tools/state-store/action-graph once per process; the Depends() targets."],
-    ["_responses.py", "30", "Two tiny shared helpers: error translation, and RunOutcome → response conversion."],
-    ["tools_routes.py", "319", "The actual /tools/* routes — one read + one write route pair per connector."],
-    ["app.py", "57", "Builds the FastAPI app, mounts tools_routes' router, adds /health and /processes/*."],
+    ["schemas.py", "172", "Pydantic request/response models — the request-body shape for every route."],
+    ["dependencies.py", "206", "Builds the shared tools/state-store/action-graph once per process (Postgres required); the Depends() targets; require_caller, the opt-in API-key gate."],
+    ["_responses.py", "36", "Two tiny shared helpers: error translation, and RunOutcome → response conversion."],
+    ["tools_routes.py", "473", "The actual /tools/* routes — read and write routes per connector, plus the one decision route."],
+    ["metrics.py", "65", "render_metrics(): a Prometheus text snapshot for GET /metrics."],
+    ["app.py", "177", "Builds the FastAPI app: mounts tools_routes' router, adds the request-log middleware, /health, /metrics and /processes/*."],
 ]
 story.append(simple_table(layout_rows, [1.3 * inch, 0.6 * inch, USABLE_W - 1.9 * inch]))
 
@@ -487,26 +489,27 @@ story.append(bl(
     "<font name='Courier'>try/except Exception as exc: raise upstream_error(exc) from exc</font>."
 ))
 
-story.append(h2("2.3 dependencies.py — the Depends() targets, and the Postgres toggle"))
+story.append(h2("2.3 dependencies.py — the Depends() targets, Postgres, and the auth gate"))
 story.append(bl(
-    "Three functions, each decorated <font name='Courier'>@lru_cache</font> — every route's "
+    "Three main functions, each decorated <font name='Courier'>@lru_cache</font> — every route's "
     "<font name='Courier'>Depends(get_tools)</font>/<font name='Courier'>Depends(get_action_graph)</font> "
     "points here:"
 ))
 story.append(code_block(
     "@lru_cache\n"
     "def get_state_store() -> StateStoreProtocol:\n"
-    "    settings = load_settings()\n"
-    "    if settings.database_url:\n"
-    "        from apm_connectors.state.postgres_store import PostgresStateStore\n"
-    "        return PostgresStateStore(_get_postgres_pool())\n"
-    "    return StateStore()\n\n"
+    "    _require_database_url()\n"
+    "    from apm_connectors.state.postgres_store import PostgresStateStore\n"
+    "    return PostgresStateStore(_get_postgres_pool())\n\n"
     "@lru_cache\n"
     "def get_tools() -> dict[str, BaseTool]:\n"
-    "    ...  # builds Gmail/Calendar/Excel/Salesforce/Jira, whichever have credentials configured\n\n"
+    "    ...  # builds Gmail/Calendar/Excel/Drive/Salesforce/Jira, whichever have credentials configured\n\n"
     "@lru_cache\n"
     "def get_action_graph():\n"
-    "    ...  # MemorySaver checkpointer, or PostgresSaver if settings.database_url is set\n"
+    "    _require_database_url()\n"
+    "    from langgraph.checkpoint.postgres import PostgresSaver\n"
+    "    checkpointer = PostgresSaver(_get_postgres_pool())   # same pool as the state store\n"
+    "    checkpointer.setup()\n"
     "    return build_action_graph(get_tools(), get_state_store(), checkpointer=checkpointer)\n"
 ))
 story.append(bl(
@@ -521,26 +524,61 @@ story.append(bl(
     "these cached functions and never constructed directly inside a route."
 ))
 story.append(bl(
-    "<b>The DATABASE_URL branch is a Strategy pattern, chosen once at startup</b>: the same "
-    "<font name='Courier'>Depends(get_state_store)</font> call site works identically whether it "
-    "resolves to a JSON-file store or a Postgres-backed one — nothing downstream branches on which. "
-    "See the State Store and Persistence sections of the architecture reference doc for the full "
-    "story on why this exists."
+    "<b>Postgres is required, with one enforcement point.</b> <font name='Courier'>_require_database_url()</font> "
+    "raises a clear RuntimeError when <font name='Courier'>DATABASE_URL</font> is unset — there is no "
+    "file-backed or in-memory fallback for the state store or the checkpointer. It's called here rather "
+    "than inside <font name='Courier'>load_settings()</font> because other callers of that function (the "
+    "MCP server, tests) never need a database. Both Postgres users share one connection pool, created with "
+    "<font name='Courier'>check=ConnectionPool.check_connection</font> so a connection that died while idle "
+    "(a serverless Postgres suspending, for example) is replaced instead of failing every call that gets it. "
+    "Routes still only see <font name='Courier'>StateStoreProtocol</font>, so tests swap in the file-backed "
+    "<font name='Courier'>StateStore</font> class as a lightweight double (§3.1)."
+))
+story.append(bl(
+    "<b>The auth gate, require_caller.</b> The one dependency that is <i>not</i> cached, because it has to "
+    "read each request's own <font name='Courier'>Authorization</font> header:"
+))
+story.append(code_block(
+    "def require_caller(\n"
+    "    credentials: HTTPAuthorizationCredentials | None = Security(_bearer_scheme),\n"
+    ") -> str | None:\n"
+    "    api_keys = get_api_keys()          # {key: caller_name}, parsed once from APM_API_KEYS\n"
+    "    if not api_keys:\n"
+    "        return None                    # auth is opt-in: no keys configured = no auth\n"
+    "    if credentials is None:\n"
+    '        raise HTTPException(status_code=401, detail="Missing bearer token")\n'
+    "    caller = api_keys.get(credentials.credentials)\n"
+    "    if caller is None:\n"
+    '        raise HTTPException(status_code=401, detail="Invalid API key")\n'
+    "    return caller\n"
+))
+story.append(bl(
+    "It is attached at the router level (<font name='Courier'>APIRouter(..., dependencies=[Depends(require_caller)])</font>, "
+    "§2.4) and on every <font name='Courier'>/processes/*</font> and <font name='Courier'>/metrics</font> route, "
+    "but never on <font name='Courier'>/health</font>, because a load balancer's health check carries no "
+    "credentials. Its return value is the caller's configured <i>name</i>, which write and decision routes pass "
+    "on as <font name='Courier'>proposed_by</font>/<font name='Courier'>decided_by</font>, so the audit trail "
+    "records who proposed a write and who approved it."
 ))
 
-story.append(h2("2.4 tools_routes.py — the actual routes, and the two shapes"))
+story.append(h2("2.4 tools_routes.py — the actual routes, and their three shapes"))
 story.append(bl(
-    "Every one of the eighteen routes here is one of exactly two shapes. A <b>read</b> calls the "
+    "Every one of the twenty-two routes here is one of three shapes. A <b>read</b> calls the "
     "tool directly and returns data immediately:"
 ))
 story.append(code_block(
     "@router.post(\"/salesforce/query\")\n"
-    "def salesforce_query(body: SalesforceQueryRequest, tools: dict[str, BaseTool] = Depends(get_tools)) -> list[dict]:\n"
+    "def salesforce_query(\n"
+    "    body: SalesforceQueryRequest,\n"
+    "    tools: dict[str, BaseTool] = Depends(get_tools),\n"
+    "    caller: str | None = Depends(require_caller),\n"
+    ") -> list[dict]:\n"
     "    tool = _tool(tools, \"salesforce\")\n"
     "    process_id = _resolve_process_id(body.process_id)\n"
     "    try:\n"
-    "        results = tool.query_records(process_id, soql=body.soql)\n"
+    "        results = tool.query_records(process_id, soql=body.soql, caller=caller)\n"
     "    except Exception as exc:\n"
+    '        tool.record_failure(process_id, f"Query Salesforce ({body.soql!r}) failed: {exc}", caller=caller)\n'
     "        raise upstream_error(exc) from exc\n"
     "    return [r.__dict__ for r in results]\n"
 ))
@@ -549,22 +587,27 @@ story.append(bl(
     "graph instead, via the shared <font name='Courier'>_propose</font> helper:"
 ))
 story.append(code_block(
-    "def _propose(graph, process_id, tool, method, description, payload) -> RunOutcomeResponse:\n"
+    "def _propose(graph, process_id, tool, method, description, payload, caller=None) -> RunOutcomeResponse:\n"
     "    try:\n"
     "        outcome = start_action(graph, process_id, tool=tool, method=method,\n"
-    "                                description=description, payload=payload)\n"
+    "                                description=description, payload=payload, proposed_by=caller)\n"
     "    except Exception as exc:\n"
     "        raise upstream_error(exc) from exc\n"
     "    return to_response(outcome)\n\n"
     "@router.post(\"/salesforce/create\", response_model=RunOutcomeResponse)\n"
-    "def salesforce_create(body: SalesforceCreateRequest, tools=Depends(get_tools), graph=Depends(get_action_graph)):\n"
+    "def salesforce_create(body: SalesforceCreateRequest, tools=Depends(get_tools),\n"
+    "                      graph=Depends(get_action_graph), caller=Depends(require_caller)):\n"
     '    _tool(tools, "salesforce")  # fail fast, before recording a pending action doomed to fail\n'
+    "    action_id = _resolve_process_id(body.process_id)\n"
     "    description = f\"Create Salesforce {body.object_name} record\"\n"
     "    payload = {\"object_name\": body.object_name, \"fields\": body.fields}\n"
-    "    return _propose(graph, action_id, \"salesforce\", \"create_record\", description, payload)\n"
+    "    return _propose(graph, action_id, \"salesforce\", \"create_record\", description, payload, caller=caller)\n"
 ))
 story.append(bl(
-    "Three tiny module-level helpers make every one of the eighteen routes a 3-6 line function: "
+    "A read that fails also writes an <font name='Courier'>action_failed</font> entry to the audit trail "
+    "(<font name='Courier'>record_failure</font>) before turning into a 502, so a failed call is visible "
+    "in a process's history, not just in a server log. "
+    "Three tiny module-level helpers make every one of these routes a short function: "
     "<font name='Courier'>_tool(tools, name)</font> raises a clean 503 if that connector isn't "
     "configured on this server (rather than the route breaking with an unrelated error); "
     "<font name='Courier'>_resolve_process_id(process_id)</font> generates a "
@@ -575,16 +618,19 @@ story.append(bl(
 ))
 story.append(code_block(
     "@router.post(\"/actions/{action_id}/decision\", response_model=RunOutcomeResponse)\n"
-    "def decide_action(action_id: str, body: DecisionRequest, graph=Depends(get_action_graph)) -> RunOutcomeResponse:\n"
+    "def decide_action(action_id: str, body: DecisionRequest, graph=Depends(get_action_graph),\n"
+    "                  caller: str | None = Depends(require_caller)) -> RunOutcomeResponse:\n"
     "    try:\n"
-    "        outcome = resume_process(graph, action_id, approved=body.approved)\n"
+    "        outcome = resume_process(graph, action_id, approved=body.approved, decided_by=caller)\n"
     "    except Exception as exc:\n"
     "        raise upstream_error(exc) from exc\n"
     "    return to_response(outcome)\n"
 ))
 story.append(bl(
-    "Note the <font name='Courier'>APIRouter</font> at the top of the file — "
-    "<font name='Courier'>router = APIRouter(prefix=\"/tools\", tags=[\"tools\"])</font> — every "
+    "This decision route is meant for a human, through a human-facing review surface — never for the "
+    "agent that proposed the write. That's why the MCP server deliberately exposes no tool for it (see the "
+    "MCP server reference). Note the <font name='Courier'>APIRouter</font> at the top of the file — "
+    "<font name='Courier'>router = APIRouter(prefix=\"/tools\", tags=[\"tools\"], dependencies=[Depends(require_caller)])</font> — every "
     "route in this file is declared against <font name='Courier'>router</font>, not "
     "<font name='Courier'>app</font> directly. That's what lets <font name='Courier'>app.py</font> "
     "mount this whole file's worth of routes in one line (§2.5): "
@@ -595,20 +641,42 @@ story.append(bl(
 story.append(h2("2.5 app.py — assembling the app"))
 story.append(code_block(
     "def create_app() -> FastAPI:\n"
-    '    app = FastAPI(title="APM Connectors & Enterprise Systems API")\n'
+    "    configure_logging()                       # JSON log lines on the root logger\n"
+    '    app = FastAPI(title="APM Connectors & Enterprise Systems API", lifespan=_lifespan)\n'
     "    app.include_router(tools_router)          # every /tools/* route, mounted in one line\n\n"
+    '    @app.middleware("http")\n'
+    "    async def _log_requests(request, call_next): ...   # method/path/status/duration (+ process_id)\n\n"
     '    @app.get("/health")\n'
-    "    def health() -> dict[str, str]:\n"
-    '        return {"status": "ok"}\n\n'
-    '    @app.get("/processes/{process_id}/status")\n'
-    "    def get_process_status(process_id: str, store: StateStore = Depends(get_state_store)) -> dict:\n"
+    "    def health(store=Depends(get_state_store), tools=Depends(get_tools)) -> JSONResponse:\n"
+    "        try:\n"
+    "            store.list_processes()\n"
+    "            store_ok = True\n"
+    "        except Exception:\n"
+    "            store_ok = False\n"
+    "        tool_status = {name: tool.health_check() for name, tool in tools.items()}\n"
+    '        status = "ok" if store_ok and all(tool_status.values()) else "degraded" if store_ok else "unhealthy"\n'
+    '        body = {"status": status, "state_store": store_ok, "tools": tool_status}\n'
+    "        return JSONResponse(content=body, status_code=200 if store_ok else 503)\n\n"
+    '    @app.get("/metrics", dependencies=_authenticated)\n'
+    "    def metrics(...) -> PlainTextResponse: ...   # Prometheus text, see metrics.py\n\n"
+    '    @app.get("/processes/{process_id}/status", dependencies=_authenticated)\n'
+    "    def get_process_status(process_id: str, store: StateStoreProtocol = Depends(get_state_store)) -> dict:\n"
     "        status = store.get_status(process_id)\n"
     "        if status is None:\n"
     '            raise HTTPException(status_code=404, detail=f"unknown process_id: {process_id}")\n'
     "        return status\n\n"
-    "    # ... /processes, /processes/{id}/history, /processes/{id}/pending, same shape ...\n"
+    "    # ... /processes, /processes/pending, /processes/{id}/history, /processes/{id}/pending ...\n"
     "    return app\n\n"
     "app = create_app()   # module-level instance -- what uvicorn actually imports and runs\n"
+))
+story.append(bl(
+    "<b>/health is a real check, with two levels of failure.</b> A dead state store means the server can't "
+    "serve anything, so it returns 503 and a load balancer pulls the instance out of rotation. An unhealthy "
+    "connector is reported as <font name='Courier'>\"degraded\"</font> at 200 instead: most deployments "
+    "configure only some connectors, and one bad Jira credential shouldn't take down every other "
+    "connector's traffic. The <font name='Courier'>lifespan</font> hook builds the action graph at startup, "
+    "so a missing <font name='Courier'>DATABASE_URL</font> or unreachable Postgres fails before the port is "
+    "even bound, never on the first real request."
 ))
 story.append(bl(
     "<b>Why a factory function (create_app()) instead of just a module-level FastAPI() call.</b> A "
@@ -642,12 +710,15 @@ patterns = [
     ["Factory Function",
      "create_app(), build_action_graph(...), build_server(...) (MCP layer)",
      "Same shape everywhere in this codebase: take dependencies as parameters, return a built object, so tests inject different dependencies without subclassing anything."],
-    ["Strategy (pluggable implementation)",
-     "get_state_store()'s DATABASE_URL branch",
-     "Two interchangeable persistence backends (file vs. Postgres) behind one call site — the caller never branches on which is active."],
+    ["Fail fast at startup",
+     "_require_database_url() + the lifespan hook in app.py",
+     "A server without its required Postgres refuses to bind its port with a clear error, instead of starting and failing on the first real request."],
     ["Adapter / Protocol",
      "StateStoreProtocol (state/store.py)",
-     "Callers depend on a method surface, never a concrete class — this is what makes the file-store-to-Postgres swap possible without touching routes."],
+     "Callers depend on a method surface, never a concrete class — production uses PostgresStateStore while tests drop in the file-backed StateStore, with no route changes."],
+    ["Opt-in gate as a dependency",
+     "require_caller on the /tools router, /processes/* and /metrics",
+     "Auth is off until APM_API_KEYS is set, then enforced everywhere at once; the caller's name flows into the audit trail as proposed_by/decided_by."],
     ["Facade",
      "tools_routes.py's route functions",
      "Each route is a thin 3-6 line facade over a much larger subsystem (the connector layer + the action graph) — callers never see that complexity."],
@@ -669,15 +740,16 @@ story.append(bl(
 story.append(code_block(
     "app = create_app()\n"
     "app.dependency_overrides[get_tools] = lambda: fake_tools_dict\n"
-    "app.dependency_overrides[get_action_graph] = lambda: fake_action_graph\n\n"
+    "app.dependency_overrides[get_action_graph] = lambda: fake_action_graph\n"
+    "app.dependency_overrides[get_state_store] = lambda: file_backed_test_store\n\n"
     "client = TestClient(app)\n"
     'response = client.post("/tools/salesforce/query", json={"soql": "SELECT Id FROM Account"})\n'
 ))
 story.append(bl(
     "This is the direct payoff of §2.3's design choice: because every route depends on "
-    "<font name='Courier'>get_tools</font>/<font name='Courier'>get_action_graph</font> rather than "
-    "importing concrete tool classes, a test can redirect <i>only those two functions</i> and every "
-    "route automatically uses fake, no-live-credentials-needed connectors — no route code changes, "
+    "<font name='Courier'>get_tools</font>/<font name='Courier'>get_action_graph</font>/<font name='Courier'>get_state_store</font> rather than "
+    "importing concrete classes, a test can redirect <i>only those three functions</i> and every "
+    "route automatically uses fake, no-live-credentials-needed connectors and no real Postgres — no route code changes, "
     "no monkeypatching internals. <font name='Courier'>TestClient</font> itself runs requests "
     "in-process against the ASGI app object directly (no real socket, no separately-running Uvicorn) — "
     "the same in-process-ASGI idea the MCP server layer's own tests reuse via "
@@ -693,12 +765,16 @@ route_rows = [
     ["POST /tools/calendar/create-event", "write", "create_event"],
     ["POST /tools/excel/worksheets, /read", "read", "list_worksheets, read_range"],
     ["POST /tools/excel/write", "write", "write_range"],
+    ["POST /tools/drive/list, /read", "read", "list_files, read_file"],
+    ["POST /tools/drive/upload, /update", "write", "upload_file, update_file"],
     ["POST /tools/salesforce/query, /read", "read", "query_records, get_record"],
     ["POST /tools/salesforce/create, /update", "write", "create_record, update_record"],
     ["POST /tools/jira/search, /read", "read", "search_issues, get_issue"],
     ["POST /tools/jira/create, /update", "write", "create_issue, update_issue"],
     ["POST /tools/actions/{action_id}/decision", "shared decision", "resume_process"],
-    ["GET /health, /processes, /processes/{id}/*", "status/audit", "StateStore reads"],
+    ["GET /health", "health (no auth)", "store.list_processes() + each tool's health_check()"],
+    ["GET /metrics", "metrics", "render_metrics(store, tools)"],
+    ["GET /processes, /processes/pending, /processes/{id}/*", "status/audit", "StateStore reads"],
 ]
 story.append(simple_table(route_rows, [2.6 * inch, 1.1 * inch, USABLE_W - 3.7 * inch]))
 
@@ -794,7 +870,7 @@ story.append(vt)
 
 story.append(Spacer(1, 10))
 story.append(bl(
-    "That's the whole layer: five small files, no reasoning of its own, every route a thin facade "
+    "That's the whole layer: six small files, no reasoning of its own, every route a thin facade "
     "over the connector layer and the action graph — built entirely from ordinary FastAPI primitives "
     "(routing, Pydantic validation, dependency injection) used consistently enough that the same "
     "handful of patterns explain every file."

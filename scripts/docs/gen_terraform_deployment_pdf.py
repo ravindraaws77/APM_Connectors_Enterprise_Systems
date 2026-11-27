@@ -143,21 +143,21 @@ story.append(bl(
 
 story.append(h2("0.6 count — conditional and repeated resources"))
 story.append(code_block(
-    "resource \"aws_ssm_parameter\" \"database_url\" {\n"
-    "  count = var.database_url != \"\" ? 1 : 0    # 1 if set, 0 (i.e. don't create it) if not\n"
-    "  name  = \"/${var.app_name}/DATABASE_URL\"\n"
-    "  value = var.database_url\n"
+    "resource \"aws_ssm_parameter\" \"api_keys\" {\n"
+    "  count = var.api_keys != \"\" ? 1 : 0    # 1 if set, 0 (i.e. don't create it) if not\n"
+    "  name  = \"/${var.app_name}/APM_API_KEYS\"\n"
+    "  value = var.api_keys\n"
     "}\n\n"
     "# elsewhere, referencing a count-based resource needs an index:\n"
-    "aws_ssm_parameter.database_url[0].arn\n"
+    "aws_ssm_parameter.api_keys[0].arn\n"
 ))
 story.append(bl(
     "<font name='Courier'>count</font> on a resource block turns it into a list of 0 or more instances "
     "— set to a ternary like <font name='Courier'>condition ? 1 : 0</font>, this is Terraform's way of "
     "saying \"only create this resource if...\", since HCL has no plain "
     "<font name='Courier'>if</font> statement. This module uses exactly this for "
-    "<font name='Courier'>google_token_json</font> and <font name='Courier'>database_url</font> (§2.6) "
-    "— both optional secrets that, unlike the three always-created ones, shouldn't exist as an SSM "
+    "<font name='Courier'>google_token_json</font> and <font name='Courier'>api_keys</font> (§2.6) "
+    "— both optional secrets that, unlike the always-created ones, shouldn't exist as an SSM "
     "parameter at all when unset. Referencing a <font name='Courier'>count</font>-based resource "
     "elsewhere always needs an index, even when there's at most one — "
     "<font name='Courier'>[0]</font>, guarded by the same condition."
@@ -311,8 +311,8 @@ story.append(rule())
 story.append(h1("Part 2 — This repo's module, file by file"))
 layout_rows = [
     ["<b>File</b>", "<b>Role</b>"],
-    ["infra/aws/ecs-fargate/main.tf", "Every resource -- ECR, Docker build/push, security groups, ALB, IAM, SSM secrets, ECS cluster/task/service, the force-redeploy trigger (419 lines)."],
-    ["infra/aws/ecs-fargate/variables.tf", "Every input this module accepts -- deploy-shape knobs (region, cpu/memory) plus every connector's optional config (126 lines)."],
+    ["infra/aws/ecs-fargate/main.tf", "Every resource -- ECR, Docker build/push, security groups, ALB, IAM, SSM secrets, ECS cluster/task/service, the force-redeploy trigger (429 lines)."],
+    ["infra/aws/ecs-fargate/variables.tf", "Every input this module accepts -- deploy-shape knobs (region, cpu/memory) plus every connector's optional config and the required database_url (136 lines)."],
     ["infra/aws/ecs-fargate/outputs.tf", "The four values printed after apply -- service_url is the one you actually use."],
     ["infra/aws/ecs-fargate/terraform.tfvars.example", "Copy to terraform.tfvars (gitignored) and fill in; the template for real, local, un-committed values."],
 ]
@@ -409,8 +409,8 @@ story.append(bl(
     "task's public IP grants no direct access: nothing except the ALB's security group can reach port "
     "8000, full stop, regardless of source IP. Both groups' unrestricted "
     "<font name='Courier'>egress</font> is deliberately broad — the service needs outbound access to "
-    "ECR, CloudWatch, SSM, and every external connector API (Gmail, Salesforce, Jira, and optionally "
-    "Postgres), which is an open-ended set of destinations not worth enumerating for an MVP deploy."
+    "ECR, CloudWatch, SSM, the Postgres instance it requires, and every external connector API (Gmail, "
+    "Salesforce, Jira), which is an open-ended set of destinations not worth enumerating for an MVP deploy."
 ))
 
 story.append(h2("2.4 The load balancer, target group, and listener"))
@@ -441,7 +441,12 @@ story.append(bl(
     "<font name='Courier'>listener</font> says \"accept HTTP on port 80\"; the "
     "<font name='Courier'>target_group</font> is who traffic actually forwards to, and owns the health "
     "check against <font name='Courier'>/health</font> that decides whether a task is considered "
-    "healthy enough to receive traffic at all. <font name='Courier'>target_type = \"ip\"</font> matters "
+    "healthy enough to receive traffic at all. That check is real, not a static ping: "
+    "<font name='Courier'>/health</font> queries the state store and calls every configured connector's "
+    "<font name='Courier'>health_check()</font>. An unreachable Postgres returns 503, so the target group "
+    "pulls the task out of rotation; an unhealthy connector returns 200 with "
+    "<font name='Courier'>\"status\": \"degraded\"</font>, so one bad Jira token doesn't take down "
+    "every other connector's traffic. <font name='Courier'>target_type = \"ip\"</font> matters "
     "specifically because Fargate has no persistent EC2 instance to target — each task gets an "
     "ephemeral IP, and the target group tracks tasks by that IP instead."
 ))
@@ -475,7 +480,7 @@ story.append(bl(
     "minimal grant, not the path of least resistance."
 ))
 
-story.append(h2("2.6 SSM secrets — three always, two conditional"))
+story.append(h2("2.6 SSM secrets — four always, two conditional"))
 story.append(code_block(
     "resource \"aws_ssm_parameter\" \"google_client_secret\" {\n"
     "  name  = \"/${var.app_name}/GOOGLE_CLIENT_SECRET\"\n"
@@ -483,27 +488,53 @@ story.append(code_block(
     "  value = var.google_client_secret != \"\" ? var.google_client_secret : \"unset\"\n"
     "}\n"
     "# ...salesforce_client_secret, jira_api_token follow the same always-created shape\n\n"
+    "# database_url is required (see variables.tf) -- apm_connectors has no\n"
+    "# file-backed/in-memory fallback to fall back to if it's missing.\n"
     "resource \"aws_ssm_parameter\" \"database_url\" {\n"
-    "  count = var.database_url != \"\" ? 1 : 0    # conditional -- see §0.6\n"
     "  name  = \"/${var.app_name}/DATABASE_URL\"\n"
     "  type  = \"SecureString\"\n"
     "  value = var.database_url\n"
+    "}\n\n"
+    "resource \"aws_ssm_parameter\" \"api_keys\" {\n"
+    "  count = var.api_keys != \"\" ? 1 : 0    # conditional -- see §0.6\n"
+    "  name  = \"/${var.app_name}/APM_API_KEYS\"\n"
+    "  type  = \"SecureString\"\n"
+    "  value = var.api_keys\n"
     "}\n"
 ))
 story.append(bl(
-    "Two different treatments for two different kinds of \"empty.\" "
+    "Three different treatments for three different kinds of \"empty.\" "
     "<font name='Courier'>google_client_secret</font>/<font name='Courier'>salesforce_client_secret</font>/"
     "<font name='Courier'>jira_api_token</font> are always created, falling back to the literal string "
     "<font name='Courier'>\"unset\"</font> when the variable is empty — harmless, because a real "
     "connector call would fail on an actually-invalid credential anyway, and simpler than making the "
     "parameter itself conditional. <font name='Courier'>google_token_json</font> and "
-    "<font name='Courier'>database_url</font> use <font name='Courier'>count</font> instead, because "
+    "<font name='Courier'>api_keys</font> use <font name='Courier'>count</font> instead, because "
     "an <font name='Courier'>\"unset\"</font> placeholder would be actively wrong for them: an empty "
     "<font name='Courier'>GOOGLE_TOKEN_JSON</font> env var should mean \"fall back to the interactive "
     "OAuth flow\" (google_auth.py, connector-layer doc §2.7), not \"here's a literal token string that "
-    "happens to say 'unset'\"; and an empty <font name='Courier'>DATABASE_URL</font> should mean \"no "
-    "Postgres configured, use the file-backed store\" (config.py's <font name='Courier'>load_settings</font>), "
-    "not a connection string the app would actually try and fail to connect to."
+    "happens to say 'unset'\"; and an empty <font name='Courier'>APM_API_KEYS</font> means \"no auth "
+    "configured\" (config.py's <font name='Courier'>_parse_api_keys</font>), whereas "
+    "<font name='Courier'>\"unset\"</font> would be parsed as a real, if useless, key entry. "
+    "<font name='Courier'>database_url</font> is the third case: there is no meaningful \"empty\". "
+    "The API's state store and action-graph checkpointer are Postgres-only and it refuses to start "
+    "without one, so the variable has a <font name='Courier'>validation</font> block and "
+    "<font name='Courier'>plan</font> fails before anything is created:"
+))
+story.append(code_block(
+    "variable \"database_url\" {\n"
+    "  type      = string\n"
+    "  sensitive = true\n"
+    "  validation {\n"
+    "    condition     = length(var.database_url) > 0\n"
+    "    error_message = \"database_url is required -- the apm_connectors API has no ...\"\n"
+    "  }\n"
+    "}\n"
+))
+story.append(bl(
+    "Failing at <font name='Courier'>plan</font> time is the cheapest point to catch it — the alternative "
+    "is a task that starts, fails its first <font name='Courier'>/health</font> check, and restarts in a "
+    "loop with the real error buried in CloudWatch."
 ))
 
 story.append(h2("2.7 The ECS task definition and service"))
@@ -556,7 +587,7 @@ story.append(code_block(
     "    source_hash  = local.source_hash\n"
     "    secrets_hash = sha1(join(\"\", [\n"
     "      var.google_client_secret, var.google_token_json, var.salesforce_client_secret,\n"
-    "      var.jira_api_token, var.database_url,\n"
+    "      var.jira_api_token, var.database_url, var.api_keys,\n"
     "    ]))\n"
     "  }\n"
     "  provisioner \"local-exec\" {\n"
@@ -577,11 +608,14 @@ story.append(bl(
 
 story.append(h2("2.9 variables.tf, outputs.tf, and terraform.tfvars"))
 story.append(bl(
-    "Every connector-specific <font name='Courier'>variable</font> defaults to an empty string — the "
+    "Every connector-specific <font name='Courier'>variable</font> (and the optional "
+    "<font name='Courier'>api_keys</font>) defaults to an empty string — the "
     "Terraform-level mirror of an unfilled local <font name='Courier'>.env</font> (FastAPI doc's "
     "config-loading section): leaving one unset doesn't break "
     "<font name='Courier'>apply</font>, it just means that connector's <font name='Courier'>/tools/*</font> "
-    "routes 503 once deployed, exactly like running locally with no credentials configured. Real values "
+    "routes 503 once deployed, exactly like running locally with no credentials configured. The one "
+    "exception is <font name='Courier'>database_url</font>, which has no default and is validated (§2.6). "
+    "Real values "
     "go in <font name='Courier'>terraform.tfvars</font> — gitignored, never committed — copied from the "
     "checked-in <font name='Courier'>terraform.tfvars.example</font> template. The four "
     "<font name='Courier'>output</font> values (§outputs.tf) are what <font name='Courier'>apply</font> "
@@ -617,11 +651,14 @@ patterns = [
      "aws_security_group.service's ingress references aws_security_group.alb.id, not a CIDR (§2.3)",
      "The task is reachable only from something currently in the ALB's security group -- a public IP existing grants no access on its own."],
     ["Conditional resource creation",
-     "count = var.database_url != \"\" ? 1 : 0 (§0.6, §2.6)",
-     "An optional secret (Postgres URL, a pre-consented OAuth token) is only created as an SSM parameter -- and only costs an IAM grant -- when actually configured."],
+     "count = var.api_keys != \"\" ? 1 : 0 (§0.6, §2.6)",
+     "An optional secret (the API's caller keys, a pre-consented OAuth token) is only created as an SSM parameter -- and only costs an IAM grant -- when actually configured."],
+    ["Fail at plan, not at runtime",
+     "validation block on var.database_url (§2.6)",
+     "A required value that's missing stops terraform plan with a clear message, instead of a task that restart-loops on a failing /health check."],
     ["Fail-open-to-safe defaults",
      "Every connector variable.tf entry defaults to \"\" (§2.9)",
-     "A deployment with zero connectors configured still applies cleanly and passes its health check -- same MVP-friendly default as an unfilled local .env."],
+     "A deployment with zero connectors configured (but a real database_url) still applies cleanly and passes its health check -- same MVP-friendly default as an unfilled local .env."],
 ]
 story.append(simple_table(patterns, [1.7 * inch, 1.9 * inch, USABLE_W - 3.6 * inch]))
 
@@ -671,18 +708,20 @@ qa = [
      "(valueFrom), which the execution role resolves at container startup only because it holds an "
      "explicit ssm:GetParameters grant scoped to exactly those parameter ARNs (§2.5) -- a real "
      "IAM-enforced boundary. GOOGLE_CLIENT_SECRET/SALESFORCE_CLIENT_SECRET/JIRA_API_TOKEN/"
-     "GOOGLE_TOKEN_JSON/DATABASE_URL all go through secrets; GOOGLE_CLIENT_ID/JIRA_BASE_URL/etc. -- "
+     "GOOGLE_TOKEN_JSON/DATABASE_URL/APM_API_KEYS all go through secrets; GOOGLE_CLIENT_ID/JIRA_BASE_URL/etc. -- "
      "not sensitive on their own -- go through environment (§1.4, §2.7)."),
     ("Q: Why do google_client_secret/salesforce_client_secret/jira_api_token always get an SSM "
-     "parameter (defaulting to the literal string \"unset\"), while google_token_json/database_url use "
+     "parameter (defaulting to the literal string \"unset\"), while google_token_json/api_keys use "
      "count to skip creating one entirely when empty?",
      "A: Because an empty value means something different for each. An unconfigured client secret would "
      "fail a real API call regardless of what placeholder it holds, so \"unset\" is harmless filler. But "
      "an empty GOOGLE_TOKEN_JSON is supposed to mean 'fall back to the interactive OAuth flow', and an "
-     "empty DATABASE_URL is supposed to mean 'use the file-backed store' -- in both cases a literal "
+     "empty APM_API_KEYS is supposed to mean 'no auth configured' -- in both cases a literal "
      "'unset' string would be actively wrong, read as a real (if broken) value instead of 'not "
      "configured'. count = var.x != \"\" ? 1 : 0 (§0.6, §2.6) skips creating the parameter at all in "
-     "that case, matching what the app already treats an absent env var as."),
+     "that case, matching what the app already treats an absent env var as. database_url is "
+     "different again: it's required, so instead of count it gets a validation block that fails plan "
+     "when it's empty (§2.6)."),
 ]
 for q, a in qa:
     story.append(caption(q))

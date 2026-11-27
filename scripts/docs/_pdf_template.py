@@ -41,11 +41,11 @@ USABLE_W = PAGE_W - 2 * MARGIN
 styles = {
     "title": ParagraphStyle("title", fontName="Helvetica-Bold", fontSize=21, leading=25, textColor=INK),
     "subtitle": ParagraphStyle("subtitle", fontName="Helvetica", fontSize=10.5, leading=14, textColor=GRAY, spaceAfter=6),
-    "h1": ParagraphStyle("h1", fontName="Helvetica-Bold", fontSize=14, leading=18, textColor=BLUE, spaceBefore=16, spaceAfter=6),
-    "h2": ParagraphStyle("h2", fontName="Helvetica-Bold", fontSize=10.5, leading=14, textColor=INK, spaceBefore=8, spaceAfter=3),
+    "h1": ParagraphStyle("h1", fontName="Helvetica-Bold", fontSize=14, leading=18, textColor=BLUE, spaceBefore=16, spaceAfter=6, keepWithNext=1),
+    "h2": ParagraphStyle("h2", fontName="Helvetica-Bold", fontSize=10.5, leading=14, textColor=INK, spaceBefore=8, spaceAfter=3, keepWithNext=1),
     "bodyleft": ParagraphStyle("bodyleft", fontName="Helvetica", fontSize=9.6, leading=14, textColor=INK, alignment=TA_LEFT, spaceAfter=6),
     "quote": ParagraphStyle("quote", fontName="Helvetica-Oblique", fontSize=9.4, leading=13.5, textColor=INK, leftIndent=14, spaceAfter=6),
-    "codecaption": ParagraphStyle("codecaption", fontName="Helvetica-Bold", fontSize=8.2, leading=11, textColor=GRAY, spaceBefore=4, spaceAfter=2),
+    "codecaption": ParagraphStyle("codecaption", fontName="Helvetica-Bold", fontSize=8.2, leading=11, textColor=GRAY, spaceBefore=4, spaceAfter=2, keepWithNext=1),
     "tablehdr": ParagraphStyle("tablehdr", fontName="Helvetica-Bold", fontSize=8.6, leading=11, textColor=INK),
     "tablecell": ParagraphStyle("tablecell", fontName="Helvetica", fontSize=8.4, leading=11.5, textColor=INK),
 }

@@ -58,31 +58,36 @@ story.append(bl(
 ))
 story.append(_code_block(
     "@router.post(\"/salesforce/create\", response_model=RunOutcomeResponse)\n"
-    "def salesforce_create(body: SalesforceCreateRequest, tools=Depends(get_tools), graph=Depends(get_action_graph)):\n"
+    "def salesforce_create(body: SalesforceCreateRequest, tools=Depends(get_tools),\n"
+    "                      graph=Depends(get_action_graph), caller=Depends(require_caller)):\n"
     "    _tool(tools, \"salesforce\")  # fail fast, before recording a pending action doomed to fail\n"
+    "    action_id = _resolve_process_id(body.process_id)\n"
     "    description = f\"Create Salesforce {body.object_name} record\"\n"
     "    payload = {\"object_name\": body.object_name, \"fields\": body.fields}\n"
-    "    return _propose(graph, action_id, \"salesforce\", \"create_record\", description, payload)\n"
+    "    return _propose(graph, action_id, \"salesforce\", \"create_record\", description, payload, caller=caller)\n"
     "\n"
     "@router.post(\"/actions/{action_id}/decision\", response_model=RunOutcomeResponse)\n"
-    "def decide_action(action_id: str, body: DecisionRequest, graph=Depends(get_action_graph)):\n"
-    "    outcome = resume_process(graph, action_id, approved=body.approved)\n"
+    "def decide_action(action_id: str, body: DecisionRequest, graph=Depends(get_action_graph),\n"
+    "                  caller=Depends(require_caller)):\n"
+    "    outcome = resume_process(graph, action_id, approved=body.approved, decided_by=caller)\n"
     "    return to_response(outcome)\n"
 ))
 story.append(bl(
-    "Every one of the five connectors' write/action routes (gmail_send, calendar_create_event, "
-    "excel_write, salesforce_create/update, jira_create/update) is the same three lines: look up the "
+    "Every one of the six connectors' write/action routes (gmail_send, calendar_create_event, "
+    "excel_write, drive_upload/update, salesforce_create/update, jira_create/update) is the same few lines: look up the "
     "tool to fail fast on an unconfigured connector, build a description + payload, call _propose. "
     "There is exactly <b>one</b> decision route -- /tools/actions/{action_id}/decision -- shared by "
     "all of them, because approving or rejecting is the same operation regardless of which connector "
-    "proposed the action."
+    "proposed the action. It is meant for a human through a review surface: the MCP server (section 5) "
+    "deliberately has no tool that reaches it. With APM_API_KEYS set, require_caller identifies every "
+    "caller, and its name is recorded as proposed_by on the proposal and decided_by on the decision."
 ))
 
 # 2 -- connector layer
-story.append(h1("2. The connector layer — one interface, five connectors"))
+story.append(h1("2. The connector layer — one interface, six connectors"))
 story.append(bl(
-    "Every connector (gmail_tool.py, calendar_tool.py, excel_file_tool.py, salesforce_tool.py, "
-    "jira_tool.py) implements the same abstract base:"
+    "Every connector (gmail_tool.py, calendar_tool.py, excel_file_tool.py, drive_tool.py, "
+    "salesforce_tool.py, jira_tool.py) implements the same abstract base:"
 ))
 story.append(_code_block(
     "class Capability(str, Enum):\n"
@@ -116,9 +121,11 @@ story.append(bl(
     "a special case for \"this didn't actually happen.\""
 ))
 story.append(bl(
-    "The MS Graph/OneDrive Excel connector that originally existed alongside excel_file_tool.py has "
-    "been removed entirely (code, tests, docs, Terraform) in favor of the local-file/Google-Drive "
-    "Excel connector alone — one Excel implementation, not two competing ones."
+    "The newest connector, drive_tool.py, handles whole documents (contracts, purchase orders) and is "
+    "scoped to one configured folder in code: it needs the broad drive OAuth scope, so every listing "
+    "queries inside APM_DRIVE_FOLDER_ID and every read/update refuses a file whose parents don't include "
+    "it. When any connector call raises, record_failure writes an action_failed audit event before the "
+    "error propagates, so a real failure is never only a 502 with nothing recorded."
 ))
 
 # 3 -- approval gate
@@ -150,51 +157,56 @@ story.append(bl(
 ))
 
 # 4 -- persistence (the newest, most important addition)
-story.append(h1("4. Persistence — the pluggable state store and checkpointer"))
+story.append(h1("4. Persistence — Postgres, required"))
 story.append(bl(
     "Two different things need to survive between a write being proposed and a human deciding on it, "
-    "and until recently neither one reliably did on this deployment's actual infrastructure (AWS ECS "
-    "Fargate tasks have no persistent disk, and a redeploy replaces the running task entirely):"
+    "and AWS ECS Fargate tasks have no persistent disk (a redeploy replaces the running task entirely). "
+    "So both live in Postgres, and the API server refuses to start without one:"
 ))
 story.append(simple_table(
     [
-        ["<b></b>", "<b>No DATABASE_URL (default)</b>", "<b>DATABASE_URL set</b>"],
+        ["<b></b>", "<b>API server (production)</b>", "<b>Tests</b>"],
         ["State store<br/>(status, audit log, pending actions)",
-         "StateStore — a local JSON file (state/store.py)",
-         "PostgresStateStore — Postgres tables, identical method surface (state/postgres_store.py)"],
+         "PostgresStateStore — Postgres tables (state/postgres_store.py)",
+         "StateStore — a local JSON file (state/store.py), kept as a lightweight test double"],
         ["LangGraph checkpointer<br/>(the graph's own paused execution state)",
-         "MemorySaver — in-process memory only, gone the instant the process dies",
-         "PostgresSaver (langgraph-checkpoint-postgres) — same Postgres database"],
+         "PostgresSaver (langgraph-checkpoint-postgres) — same Postgres database",
+         "MemorySaver — in-process memory"],
     ],
     [1.9 * inch, (USABLE_W - 1.9 * inch) / 2, (USABLE_W - 1.9 * inch) / 2],
 ))
 story.append(bl(
-    "Both are picked by the exact same signal, in api/dependencies.py, and share one connection pool "
+    "Both are built in api/dependencies.py behind one enforcement point, and share one connection pool "
     "rather than opening two separate sets of connections to the same database:"
 ))
 story.append(_code_block(
+    "def _require_database_url() -> str:\n"
+    "    settings = load_settings()\n"
+    "    if not settings.database_url:\n"
+    "        raise RuntimeError(\"DATABASE_URL is required to run the apm_connectors API server -- \"\n"
+    "                           \"there is no file-backed/SQLite/in-memory fallback ...\")\n"
+    "    return settings.database_url\n"
+    "\n"
     "@lru_cache\n"
     "def get_state_store() -> StateStoreProtocol:\n"
-    "    settings = load_settings()\n"
-    "    if settings.database_url:\n"
-    "        from apm_connectors.state.postgres_store import PostgresStateStore\n"
-    "        return PostgresStateStore(_get_postgres_pool())\n"
-    "    return StateStore()\n"
+    "    _require_database_url()\n"
+    "    from apm_connectors.state.postgres_store import PostgresStateStore\n"
+    "    return PostgresStateStore(_get_postgres_pool())\n"
     "\n"
     "@lru_cache\n"
     "def get_action_graph():\n"
-    "    if settings.database_url:\n"
-    "        from langgraph.checkpoint.postgres import PostgresSaver\n"
-    "        checkpointer = PostgresSaver(_get_postgres_pool())\n"
-    "        checkpointer.setup()\n"
-    "    else:\n"
-    "        checkpointer = MemorySaver()\n"
+    "    _require_database_url()\n"
+    "    from langgraph.checkpoint.postgres import PostgresSaver\n"
+    "    checkpointer = PostgresSaver(_get_postgres_pool())\n"
+    "    checkpointer.setup()\n"
     "    return build_action_graph(get_tools(), get_state_store(), checkpointer=checkpointer)\n"
 ))
 story.append(bl(
     "Callers (tools, routes, tests) only ever depend on <b>StateStoreProtocol</b>'s method surface, "
-    "never on which class is behind it — that's what made this swap possible without touching "
-    "anything outside state/ and api/dependencies.py. One more detail worth knowing: the pool is "
+    "never on which class is behind it — that's what lets tests run the real routes against a "
+    "file-backed double with no database. app.py's startup hook builds the graph before the server binds "
+    "its port, so a missing DATABASE_URL or unreachable Postgres fails immediately, and /health returns "
+    "503 if the store becomes unreachable later. One more detail worth knowing: the pool is "
     "opened with check=ConnectionPool.check_connection, which verifies a connection is actually alive "
     "before handing it out and transparently replaces it if not. Without this, a serverless Postgres "
     "provider (Neon, etc.) suspending its compute while a pooled connection sits idle breaks every "
@@ -216,12 +228,15 @@ story.append(bl(
     "never imports apm_connectors.tools or apm_connectors.graph directly -- so it adds no new "
     "enforcement code and needs none: an MCP tool call to gmail_send still ends up as a plain "
     "POST /tools/gmail/send, hitting the exact same start_action → interrupt() → approval pipeline "
-    "as any other caller. A misbehaving or adversarial agent has no more power here than a script "
-    "hitting the REST API directly."
+    "as any other caller."
 ))
 story.append(bl(
-    "Eighteen tools in total mirror the eighteen /tools/* routes one-to-one, plus a single shared "
-    "decide_action tool for the decision route. Tool docstrings here do real work beyond documenting "
+    "Twenty-two tools: one per /tools/* data route, plus a read-only action_status for checking a "
+    "proposed write's progress. There is deliberately <b>no</b> tool for the decision route. The server-side "
+    "gate stops a write until someone decides, but it can't tell who is deciding — so an agent that could "
+    "call the decision route could approve its own writes. This package originally shipped such a tool "
+    "(decide_action); it was removed, and tests/test_mcp_server.py's test_no_tool_can_decide_an_action "
+    "guards against it coming back. Tool docstrings here do real work beyond documenting "
     "for a human reader — they're the natural-language interface an LLM reads at call-decision time "
     "to translate a free-text request into an actual call with the right arguments."
 ))
@@ -233,8 +248,9 @@ story.append(bl(
     "service behind a public Application Load Balancer that health-checks /health, in the account's "
     "default VPC. terraform apply does the whole thing in one command — including the docker build/"
     "push itself, via a local-exec provisioner — no separate CI/CD system. Every connector credential "
-    "and DATABASE_URL are optional Terraform variables, defaulting to empty exactly like an unfilled "
-    "local .env; secrets are stored as SSM SecureString parameters, never plain environment variables, "
+    "(and the optional api_keys) is a Terraform variable defaulting to empty, exactly like an unfilled "
+    "local .env; database_url is the exception — required, with a validation block that fails plan if "
+    "it's empty. Secrets are stored as SSM SecureString parameters, never plain environment variables, "
     "and resolved by ECS at task startup."
 ))
 story.append(bl(
@@ -257,9 +273,10 @@ vocab = [
     ["BaseTool / Capability", "The common connector interface (tools/base.py) and its read/write/action capability flags."],
     ["dry_run guard", "require_dry_run_guard — a connector-level defense in depth that logs every real vs. dry-run call, independent of the graph's interrupt() gate."],
     ["interrupt() / Command(resume=...)", "LangGraph's pause/resume primitive — the actual mechanism that makes a write physically wait for a human decision."],
-    ["Checkpointer", "Where a paused graph's execution state lives between the pause and the resume — MemorySaver (in-process) or PostgresSaver (durable)."],
-    ["StateStoreProtocol", "The method surface every state store implementation (file-backed or Postgres) satisfies — what callers actually depend on."],
-    ["DATABASE_URL", "The single setting that switches both the state store and the checkpointer from in-memory/local-file to Postgres, together."],
+    ["Checkpointer", "Where a paused graph's execution state lives between the pause and the resume — PostgresSaver in the server, MemorySaver in tests."],
+    ["StateStoreProtocol", "The method surface every state store implementation (Postgres, or the file-backed test double) satisfies — what callers actually depend on."],
+    ["DATABASE_URL", "The required Postgres connection string for both the state store and the checkpointer; the server won't start without it."],
+    ["require_caller / APM_API_KEYS", "Opt-in bearer-token auth on every route but /health; the caller's name becomes proposed_by/decided_by in the audit trail."],
     ["MCP (Model Context Protocol)", "The standard this package's separate apm_connectors_mcp package uses to expose /tools/* as tools for an LLM agent host."],
 ]
 vocab_rows = [["<b>Term</b>", "<b>Meaning here</b>"]] + vocab
@@ -279,10 +296,10 @@ story.append(vt)
 
 story.append(Spacer(1, 10))
 story.append(bl(
-    "That's the whole system: a thin, reasoning-free HTTP layer over five connectors, gated by one "
-    "interrupt-based approval mechanism, backed by a persistence layer that can be either "
-    "zero-infrastructure or durable behind a single setting, reachable by a script, a reasoning layer, "
-    "or an LLM agent through the same contract either way."
+    "That's the whole system: a thin, reasoning-free HTTP layer over six connectors, gated by one "
+    "interrupt-based approval mechanism that only a human can open, backed by durable Postgres "
+    "persistence, and reachable by a script, a reasoning layer, or an LLM agent through the same "
+    "contract."
 ))
 
 doc = SimpleDocTemplate(

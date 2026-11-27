@@ -1,6 +1,6 @@
 """Page 1 of docs/architecture.pdf: the whole-system diagram (every
 component, the propose/approve/execute loop, the pluggable persistence
-layer, all five connectors) as one landscape-A3 flowchart. See
+layer, all six connectors) as one landscape-A3 flowchart. See
 scripts/docs/README.md for the overall doc shape and
 gen_architecture_pdf.py for the script that runs this, its companion
 page, and the deep dive, then merges all three.
@@ -38,7 +38,7 @@ c.drawString(40, PAGE_H - 60,
 c.setFont("Helvetica-Oblique", 8.4)
 c.setFillColor(BLUE)
 c.drawString(40, PAGE_H - 74,
-             "Updated: 5 live connectors (MS Graph Excel removed), Postgres-backed state store + LangGraph checkpointer (DATABASE_URL), MCP server layer")
+             "Updated: 6 live connectors (incl. Drive), Postgres required for state store + checkpointer, opt-in API-key auth, MCP server with no decision tool")
 
 # ---- Row 1: external callers ----------------------------------------------
 top_y = PAGE_H - 130
@@ -53,7 +53,7 @@ box(c, PAGE_W - 340, top_y, 300, callers_h,
 
 mcp_y = top_y - 76
 box(c, PAGE_W - 340, mcp_y, 300, 46,
-    ["apm_connectors_mcp", "MCP server (stdio / SSE / streamable-http) — same /tools/* routes as MCP tools"],
+    ["apm_connectors_mcp", "MCP server — /tools/* as MCP tools + read-only action_status, no decision tool"],
     fill=GRAY_FILL, stroke=GRAY, text_color=INK)
 
 arrow(c, PAGE_W - 190, top_y, PAGE_W - 190, mcp_y + 46, color=INK)
@@ -66,10 +66,10 @@ container(c, 40, api_y, PAGE_W - 80, api_h,
           stroke=BLUE, fill=BLUE_FILL, title_color=BLUE)
 
 box(c, 70, api_y + 12, 420, 34,
-    ["/tools/* routes", "tools_routes.py — per-tool read + write endpoints, no reasoning"],
+    ["/tools/* routes", "tools_routes.py — per-tool read + write endpoints; opt-in API keys (require_caller)"],
     fill=WHITE, stroke=BLUE, text_color=INK, title_size=9, body_size=7.4)
 box(c, PAGE_W - 490, api_y + 12, 420, 34,
-    ["/health, /processes/*", "app.py — status, audit history, pending actions"],
+    ["/health, /metrics, /processes/*", "app.py — real health check, Prometheus metrics, audit history, pending actions"],
     fill=WHITE, stroke=BLUE, text_color=INK, title_size=9, body_size=7.4)
 
 arrow(c, 190, top_y, 190, api_y + api_h, label="HTTP  POST /tools/*")
@@ -78,9 +78,9 @@ arrow(c, PAGE_W - 190, mcp_y, PAGE_W - 190, api_y + api_h, label="HTTP  (same /t
 # ---- Row 3: action graph + human approver ----------------------------------
 graph_y = api_y - 120
 graph_h = 96
-graph_x, graph_w = 40, PAGE_W - 300
+graph_x, graph_w = 40, PAGE_W - 330
 container(c, graph_x, graph_y, graph_w, graph_h,
-          "Action Graph  —  graph.py (build_action_graph, LangGraph)",
+          "Action Graph  —  graph.py (LangGraph)",
           stroke=AMBER, fill=AMBER_FILL, title_color=AMBER)
 
 node_y = graph_y + 14
@@ -104,11 +104,11 @@ arrow(c, approval_x + approval_w, node_y + node_h / 2, execute_x, node_y + node_
 arrow(c, 190, api_y, 190, graph_y + graph_h, label="start_action() / resume_process()")
 
 # Human approver
-human_x, human_w = graph_x + graph_w + 40, 220
+human_x, human_w = graph_x + graph_w + 30, 220   # right edge = PAGE_W - 40
 human_y = graph_y
 box(c, human_x, human_y, human_w, graph_h,
     ["Human Approver", "sees pending_action (tool, method, description, payload)",
-     "POST /tools/actions/{action_id}/decision"],
+     "POST /tools/actions/{action_id}/decision", "via a human review surface — never an agent"],
     fill=WHITE, stroke=RED, text_color=INK, title_size=9.5, body_size=7.2)
 
 approval_cx = approval_x + approval_w / 2
@@ -133,16 +133,17 @@ poly_arrow(
 )
 
 # ---- Row 4: connector layer -------------------------------------------------
-conn_y = graph_y - 96
-conn_h = 60
+conn_y = graph_y - 102
+conn_h = 66
 container(c, 40, conn_y, PAGE_W - 80, conn_h,
-          "Connector Layer  —  tools/base.BaseTool  (capabilities: read / write / action, dry_run guard, audit log)",
+          "Connector Layer  —  tools/base.BaseTool",
           stroke=BLUE, fill=BLUE_FILL, title_color=BLUE)
 
 connectors = [
     ("Gmail", "gmail_tool.py", "search / read → send_email (action)"),
     ("Google Calendar", "calendar_tool.py", "search / read → create_event (action)"),
     ("Excel Files", "excel_file_tool.py", "local + Google Drive → write_range"),
+    ("Google Drive", "drive_tool.py", "list / read → upload/update (one folder)"),
     ("Salesforce", "salesforce_tool.py", "SOQL query / read → create/update"),
     ("Jira", "jira_tool.py", "JQL search / read → create/update"),
 ]
@@ -167,6 +168,7 @@ externals = [
     "Gmail API\n(Google OAuth 2.0)",
     "Google Calendar API\n(shared Google OAuth)",
     "Local disk /\nGoogle Drive API",
+    "Google Drive API\n(full drive scope, one folder)",
     "Salesforce REST API\n(Client Credentials Flow)",
     "Jira Cloud REST API\n(API token, Basic auth)",
 ]
@@ -182,34 +184,36 @@ for i, label in enumerate(externals):
 store_y = 40
 store_h = 56
 container(c, 40, store_y, graph_x + graph_w - 40, store_h,
-          "Persistence Layer  —  State Store + LangGraph Checkpointer  (pluggable via DATABASE_URL)", stroke=GREEN, fill=GREEN_FILL, title_color=GREEN)
+          "Persistence Layer  —  State Store + LangGraph Checkpointer  (Postgres, required: DATABASE_URL)", stroke=GREEN, fill=GREEN_FILL, title_color=GREEN)
 c.setFont("Helvetica", 7.6)
 c.setFillColor(INK)
 c.drawString(60, store_y + 20,
-             "No DATABASE_URL (default): StateStore JSON file + in-process MemorySaver — zero infra, lost on restart. DATABASE_URL set: PostgresStateStore + PostgresSaver, one shared connection pool — survives a redeploy/task replacement.")
-c.drawString(60, store_y + 8, "Same method surface either way (StateStoreProtocol) — status, audit events (proposed/approved/rejected/executed/failed), and pending_actions. Every read and write is logged here.")
+             "PostgresStateStore + PostgresSaver on one shared connection pool — a paused approval survives a redeploy/task replacement. No DATABASE_URL = the server refuses to start (no file/in-memory fallback).")
+c.drawString(60, store_y + 8, "Callers see only StateStoreProtocol — status, audit events (proposed/approved/rejected/executed/failed, with proposed_by/decided_by), pending_actions. Every read and write is logged here.")
 
 store_top_cx = 40 + (graph_x + graph_w - 40) / 2
 
-# Clear vertical corridors: the 4 inter-column gaps line up identically
+# Clear vertical corridors: the inter-column gaps line up identically
 # between the connector row and the external-systems row below it (same
 # cx0/cw/gap), so a line centered on one of those gaps clears every box
 # in both rows for its whole vertical run. Below the external row is
 # open whitespace down to the state store, where the line can angle in.
-gap_x = [cx0 + (i + 1) * cw + i * gap + gap / 2 for i in range(4)]
+gap_x = [cx0 + (i + 1) * cw + i * gap + gap / 2 for i in range(n - 1)]
 below_ext = ext_y - 14  # just under the external-systems row, still clear
 
-# 1) FastAPI routes -> store: drop through the Gmail/Calendar gap, clear
-#    of the graph container's node row too (which has a wide gap between
-#    propose_node and approval_node at this x).
+# 1) FastAPI routes -> store: drop through the gap between propose_node
+#    and approval_node, jog left inside the graph container's bottom
+#    margin (below the node row), then down the Gmail/Calendar gap.
+pa_gap_x = propose_x + propose_w + 30
 poly_arrow(
-    c, [(260, api_y), (gap_x[0], api_y - 10), (gap_x[0], below_ext), (store_top_cx - 220, store_y + store_h)],
-    color=GREEN, dashed=True, label="audit log", label_seg=2,
+    c, [(pa_gap_x, api_y), (pa_gap_x, graph_y + 7), (gap_x[0], graph_y + 7),
+        (gap_x[0], below_ext), (store_top_cx - 220, store_y + store_h)],
+    color=GREEN, dashed=True, label="audit log", label_seg=3,
 )
 
 # 2) Action graph (approval_node) -> store: jog sideways within the
-#    graph->connector gap band before dropping through the Excel/
-#    Salesforce gap.
+#    graph->connector gap band before dropping through the Excel/Drive
+#    gap.
 poly_arrow(
     c, [(approval_cx, node_y), (approval_cx, graph_y + 7), (gap_x[2], graph_y + 7),
         (gap_x[2], below_ext), (store_top_cx, store_y + store_h)],
@@ -219,7 +223,7 @@ poly_arrow(
 # 3) Connector layer -> store: drop straight through the Salesforce/Jira
 #    gap, already clear of both rows below it.
 poly_arrow(
-    c, [(gap_x[3], conn_y), (gap_x[3], below_ext), (store_top_cx + 220, store_y + store_h)],
+    c, [(gap_x[4], conn_y), (gap_x[4], below_ext), (store_top_cx + 220, store_y + store_h)],
     color=GREEN, dashed=True, label="audit log", label_seg=1,
 )
 

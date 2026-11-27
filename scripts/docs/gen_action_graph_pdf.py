@@ -281,10 +281,11 @@ story.append(bl(
     "<font name='Courier'>MemorySaver</font> keeps checkpoints in a plain Python dict in RAM — fast, "
     "zero setup, but gone the instant the process exits. <font name='Courier'>PostgresSaver</font> "
     "writes them to a real database instead, so a paused approval genuinely survives a redeploy. This "
-    "repo's <font name='Courier'>api/dependencies.py</font> picks between the two based on whether "
-    "<font name='Courier'>DATABASE_URL</font> is set — the graph code here never changes either way, "
-    "since <font name='Courier'>build_action_graph</font> just takes whatever checkpointer it's "
-    "handed (§2.4)."
+    "repo's API server always uses <font name='Courier'>PostgresSaver</font> "
+    "(<font name='Courier'>api/dependencies.py</font> requires <font name='Courier'>DATABASE_URL</font> "
+    "and refuses to start without it); <font name='Courier'>MemorySaver</font> appears only in tests. The "
+    "graph code here never changes either way, since <font name='Courier'>build_action_graph</font> just "
+    "takes whatever checkpointer it's handed (§2.4)."
 ))
 
 story.append(h2("1.6 Replay: the detail that shapes how every node here is written"))
@@ -341,22 +342,27 @@ layout_rows = [
 ]
 story.append(simple_table(layout_rows, [2.3 * inch, USABLE_W - 2.3 * inch]))
 
-story.append(h2("2.1 GraphState — six optional keys, total=False"))
+story.append(h2("2.1 GraphState — eight optional keys, total=False"))
 story.append(code_block(
     "class GraphState(TypedDict, total=False):\n"
     "    process_id: str\n"
     "    category: str\n"
     "    proposed_action: dict[str, Any] | None\n"
+    "    proposed_by: str | None\n"
     "    pending_action_id: str | None\n"
     "    decision: bool | None\n"
+    "    decided_by: str | None\n"
     "    result: dict[str, Any] | None\n"
 ))
 story.append(bl(
     "Each field maps to exactly one moment in the pipeline: <font name='Courier'>proposed_action</font> "
-    "is set once, at the very start, by the caller (§2.5); <font name='Courier'>pending_action_id</font> "
-    "is set by propose_node; <font name='Courier'>decision</font> by approval_node; "
+    "and <font name='Courier'>proposed_by</font> are set once, at the very start, by the caller (§2.5); "
+    "<font name='Courier'>pending_action_id</font> is set by propose_node; "
+    "<font name='Courier'>decision</font> and <font name='Courier'>decided_by</font> by approval_node; "
     "<font name='Courier'>result</font> by execute_node. No node ever needs to see the whole shape at "
-    "once — each just reads the keys the node before it promised to set."
+    "once — each just reads the keys the node before it promised to set. The two "
+    "<font name='Courier'>_by</font> fields are the authenticated caller names from the API's opt-in auth "
+    "(None when it's off), so the audit trail records who proposed a write and who decided it."
 ))
 
 story.append(h2("2.2 RunOutcome — exactly one of two fields is ever set"))
@@ -391,6 +397,7 @@ story.append(code_block(
     "        action_record = state_store.add_pending_action(\n"
     "            process_id=process_id, tool=proposed[\"tool\"], description=proposed[\"description\"],\n"
     "            payload=proposed, category=state.get(\"category\", \"other\"),\n"
+    "            proposed_by=state.get(\"proposed_by\"),\n"
     "        )\n"
     "        return {\"pending_action_id\": action_record[\"id\"]}\n"
     "    return propose_node\n"
@@ -406,10 +413,12 @@ story.append(code_block(
     "        decision = interrupt({\"type\": \"approval_request\", \"action_id\": action_id,\n"
     "            \"tool\": proposed[\"tool\"], \"method\": proposed[\"method\"],\n"
     "            \"description\": proposed[\"description\"], \"payload\": proposed[\"payload\"],\n"
-    "            \"category\": state.get(\"category\", \"other\")})\n"
+    "            \"category\": state.get(\"category\", \"other\"),\n"
+    "            \"proposed_by\": state.get(\"proposed_by\")})\n"
     "        approved = bool(decision.get(\"approved\")) if isinstance(decision, dict) else bool(decision)\n"
-    "        state_store.resolve_pending_action(action_id, approved=approved)\n"
-    "        return {\"decision\": approved}\n"
+    "        decided_by = decision.get(\"decided_by\") if isinstance(decision, dict) else None\n"
+    "        state_store.resolve_pending_action(action_id, approved=approved, decided_by=decided_by)\n"
+    "        return {\"decision\": approved, \"decided_by\": decided_by}\n"
     "    return approval_node\n"
 ))
 story.append(bl("execute_node — the only place a write ever actually fires:"))
@@ -425,7 +434,12 @@ story.append(code_block(
     "            return {\"result\": outcome}\n"
     "        tool = tools[proposed[\"tool\"]]\n"
     "        method = getattr(tool, proposed[\"method\"])\n"
-    "        action_result = method(process_id, dry_run=False, **proposed[\"payload\"])\n"
+    "        try:\n"
+    "            action_result = method(process_id, dry_run=False, **proposed[\"payload\"])\n"
+    "        except Exception as exc:\n"
+    "            tool.record_failure(process_id, f\"{proposed['description']} failed: {exc}\",\n"
+    "                                {\"method\": proposed[\"method\"], \"payload\": proposed[\"payload\"]})\n"
+    "            raise\n"
     "        outcome = {\"executed\": action_result.executed, \"description\": action_result.description,\n"
     "                   \"details\": action_result.details}\n"
     "        state_store.set_status(process_id, stage=\"done\", result=outcome)\n"
@@ -438,7 +452,10 @@ story.append(bl(
     "<font name='Courier'>dry_run=True</font> or omit the flag. Combined with the fact that this is "
     "the <i>only</i> place in the entire codebase any write/action method is ever invoked, that one "
     "hardcoded keyword argument is effectively the codebase's whole safety guarantee, expressed as a "
-    "single line."
+    "single line. If the approved write then fails for real (an expired token, a Jira 400), "
+    "<font name='Courier'>record_failure</font> writes an <font name='Courier'>action_failed</font> event "
+    "to the audit trail before re-raising, so the process history shows the approved action didn't "
+    "happen instead of ending at \"approved\"."
 ))
 
 story.append(h2("2.4 build_action_graph — wiring it together"))
@@ -457,22 +474,25 @@ story.append(code_block(
 story.append(bl(
     "<font name='Courier'>checkpointer</font> is a required parameter here, not defaulted to "
     "<font name='Courier'>MemorySaver()</font> inside this function — the module docstring is "
-    "explicit that this is deliberate, \"so callers decide the persistence story.\" This is the same "
-    "Strategy-pattern shape the FastAPI doc's <font name='Courier'>dependencies.py</font> section "
-    "covered: the decision of <i>which</i> checkpointer lives entirely at the call site "
-    "(<font name='Courier'>api/dependencies.py</font>'s <font name='Courier'>get_action_graph()</font>), "
-    "never inside <font name='Courier'>graph.py</font> itself."
+    "explicit that this is deliberate, \"so callers decide the persistence story.\" The decision of "
+    "<i>which</i> checkpointer lives entirely at the call site: "
+    "<font name='Courier'>api/dependencies.py</font>'s <font name='Courier'>get_action_graph()</font> "
+    "always passes a <font name='Courier'>PostgresSaver</font>, while tests pass "
+    "<font name='Courier'>MemorySaver()</font> — never decided inside <font name='Courier'>graph.py</font> itself."
 ))
 
 story.append(h2("2.5 start_action / resume_process — the only two public entry points"))
 story.append(code_block(
-    "def start_action(graph, process_id, tool, method, description, payload, category=\"manual\") -> RunOutcome:\n"
+    "def start_action(graph, process_id, tool, method, description, payload,\n"
+    "                 category=\"manual\", proposed_by=None) -> RunOutcome:\n"
     "    proposed_action = {\"tool\": tool, \"method\": method, \"description\": description, \"payload\": payload}\n"
-    "    initial_state: GraphState = {\"process_id\": process_id, \"proposed_action\": proposed_action, \"category\": category}\n"
+    "    initial_state: GraphState = {\"process_id\": process_id, \"proposed_action\": proposed_action,\n"
+    "                                 \"category\": category, \"proposed_by\": proposed_by}\n"
     "    result = graph.invoke(initial_state, config=_config(process_id))\n"
     "    return _to_outcome(process_id, result)\n\n"
-    "def resume_process(graph, process_id, approved: bool) -> RunOutcome:\n"
-    "    result = graph.invoke(Command(resume={\"approved\": approved}), config=_config(process_id))\n"
+    "def resume_process(graph, process_id, approved: bool, decided_by=None) -> RunOutcome:\n"
+    "    result = graph.invoke(Command(resume={\"approved\": approved, \"decided_by\": decided_by}),\n"
+    "                          config=_config(process_id))\n"
     "    return _to_outcome(process_id, result)\n"
 ))
 story.append(bl(
@@ -484,7 +504,9 @@ story.append(bl(
     "<font name='Courier'>start_action</font> and <font name='Courier'>resume_process</font> are the "
     "two callers actually use — <font name='Courier'>tools_routes.py</font>'s "
     "<font name='Courier'>_propose</font> helper calls the former, its "
-    "<font name='Courier'>decide_action</font> route calls the latter (see the FastAPI-layer doc §2.4)."
+    "<font name='Courier'>decide_action</font> route calls the latter (see the FastAPI-layer doc §2.4). "
+    "That route is for a human reviewer; the MCP server that fronts this API for agents deliberately has "
+    "no tool that reaches it, so the agent that proposed a write can never be the one that resumes it."
 ))
 
 story.append(h2("2.6 _to_outcome — reading LangGraph's own sentinel key"))
@@ -530,7 +552,7 @@ patterns = [
      "Captures a paused run's full state externally, so it can be restored later by an unrelated process invocation, not just resumed within the same call stack."],
     ["Strategy (pluggable implementation)",
      "build_action_graph's checkpointer parameter",
-     "The graph never picks its own persistence — the caller decides in-memory vs. durable, matching the FastAPI doc's DATABASE_URL toggle."],
+     "The graph never picks its own persistence — the API server passes PostgresSaver, tests pass MemorySaver, and graph.py is identical for both."],
     ["Idempotency by construction",
      "propose_node never calls interrupt(); approval_node's side effect sits after it",
      "Guarantees a pending action is recorded exactly once and a decision resolved exactly once, despite LangGraph replaying interrupted nodes on every resume (§1.6)."],
@@ -573,7 +595,8 @@ qa = [
      "A: It's where LangGraph persists a paused (or finished) run's state, keyed by thread_id. "
      "MemorySaver keeps it in an in-process dict -- fast, zero setup, gone on restart. PostgresSaver "
      "writes it to a real database, so a paused approval survives a redeploy or a crash -- this "
-     "repo's live-verified scenario for exactly that (§1.5)."),
+     "repo's live-verified scenario for exactly that (§1.5). The API server always uses PostgresSaver; "
+     "MemorySaver is for tests."),
     ("Q: What is thread_id here, and where does it come from?",
      "A: It's the key LangGraph uses to know which paused run a given invoke() call is resuming. "
      "This repo passes process_id as the thread_id (_config()) -- the same id used for the API's "

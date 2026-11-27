@@ -74,7 +74,7 @@ mcp_rows = [
     ["Transport", "How host and server actually talk — stdio (local subprocess, stdin/stdout; the default for a locally-configured agent host) or sse/streamable-http (a network service instead, for a remote reasoning layer)."],
 ]
 story.append(simple_table(mcp_rows, [1.5 * inch, USABLE_W - 1.5 * inch]))
-story.append(caption("A minimal MCP tool — the pattern this file repeats eighteen times"))
+story.append(caption("A minimal MCP tool — the pattern this file repeats twenty-two times"))
 story.append(code_block(
     "@mcp.tool()\n"
     "async def my_tool(x: int) -> dict:\n"
@@ -97,8 +97,9 @@ story.append(quote_block(
     "wherever.”"
 ))
 story.append(bl(
-    "ConnectorClient (client.py) is genuinely minimal — one constructor, one post method, ~35 lines of "
-    "real logic. It has no knowledge of GmailTool, BaseTool, graph.py, or StateStore. Every one of the "
+    "ConnectorClient (client.py) is genuinely minimal — one constructor, a post method for the /tools/* "
+    "routes and a get method for the read-only /processes/* routes (§8), ~40 lines of real logic. It has "
+    "no knowledge of GmailTool, BaseTool, graph.py, or StateStore. Every one of the "
     "other five layers this document set has covered is, from this package's point of view, just "
     "“whatever's running behind APM_CONNECTORS_BASE_URL.” This is the same “depend on the API contract, "
     "not the implementation” discipline the State Store reference called a <i>migration seam</i> — here "
@@ -107,19 +108,29 @@ story.append(bl(
 ))
 story.append(code_block(
     "class ConnectorClient:\n"
-    "    def __init__(self, base_url: str | None = None, transport: httpx.AsyncBaseTransport | None = None) -> None:\n"
+    "    def __init__(\n"
+    "        self,\n"
+    "        base_url: str | None = None,\n"
+    "        transport: httpx.AsyncBaseTransport | None = None,\n"
+    "        api_key: str | None = None,\n"
+    "    ) -> None:\n"
+    '        api_key = api_key or os.environ.get("APM_CONNECTORS_API_KEY")\n'
+    '        headers = {"Authorization": f"Bearer {api_key}"} if api_key else None\n'
     "        self._client = httpx.AsyncClient(\n"
     '            base_url=base_url or os.environ.get("APM_CONNECTORS_BASE_URL", DEFAULT_BASE_URL),\n'
     "            timeout=30.0,\n"
     "            transport=transport,\n"
+    "            headers=headers,\n"
     "        )\n"
 ))
 story.append(bl(
-    "Two configuration surfaces worth naming: base_url defaults to APM_CONNECTORS_BASE_URL, falling "
+    "Three configuration surfaces worth naming: base_url defaults to APM_CONNECTORS_BASE_URL, falling "
     "back to 127.0.0.1:8000 (the same default docs/running-locally.md uses) — so a locally-run MCP "
     "server talks to a locally-run API server with zero configuration, but pointing it at a remote "
     "deployment (say, the ECS Fargate service_url from the Terraform reference) is a single environment "
-    "variable, no code change. transport is the testing hook — covered fully in §9."
+    "variable, no code change. api_key (APM_CONNECTORS_API_KEY) is sent as a bearer token, needed only "
+    "once the server it points at has APM_API_KEYS configured; it identifies this process as a caller like "
+    "any other, with no extra privilege. transport is the testing hook — covered fully in §9."
 ))
 
 # 4
@@ -175,35 +186,48 @@ story.append(bl(
     "codebase, a docstring is for the next engineer reading the file. Here, it's runtime-consumed input "
     "to a model's decision about whether to call this tool and with what arguments — closer to a prompt "
     "than to a comment. That's also why every write tool's docstring repeats the same explicit warning "
-    "almost verbatim (“This does NOT send anything — it pauses for human approval”) rather than relying "
+    "almost verbatim (“This does NOT send anything — it pauses for human approval and returns action_id. "
+    "A human approves or rejects it outside this agent”) rather than relying "
     "on a shared reference: an LLM reads <i>this</i> tool's description in isolation when deciding how "
     "to act, so the safety-relevant fact has to be restated locally, every time."
 ))
 
 # 6
-story.append(h1("6. Pattern: the approval gate, re-verified from the outside"))
+story.append(h1("6. Pattern: the approval gate — and who is allowed to open it"))
 story.append(quote_block(
     "“Every write tool... mirrors the REST API exactly: it does not execute anything — it returns a "
-    "paused action_id, and the agent must call decide_action(action_id, approved=True) to actually run "
-    "it. That gate is enforced server-side in the /tools/* API regardless of what this MCP layer does, "
-    "so it can't be bypassed by a misbehaving or adversarial agent — this module is a "
-    "description/transport convenience on top of it, not a second copy of the guardrail.”"
+    "paused action_id. This server deliberately has NO tool that approves or rejects that action: the "
+    "decision route (POST /tools/actions/{action_id}/decision) belongs to a human, through a human-facing "
+    "review surface, never to the agent that proposed the write. An agent that could call it would be "
+    "approving its own writes, which is exactly what this package's non-negotiable rule forbids.”"
 ))
 story.append(bl("Look at what gmail_send actually does here:"))
 story.append(code_block(
     "@mcp.tool()\n"
     "async def gmail_send(to: str, subject: str, body: str, process_id: str | None = None) -> dict[str, Any]:\n"
-    '    """Propose sending a Gmail email. This does NOT send anything..."""\n'
-    '    return await _call("/tools/gmail/send", {"to": to, "subject": subject, "body": body, "process_id": process_id})\n'
+    '    """Propose sending a Gmail email. This does NOT send anything\n'
+    "    -- it pauses for human approval and returns action_id. A human approves or rejects it\n"
+    "    outside this agent; check progress with action_status(action_id).\n"
+    '    Nothing goes out unless a human approves it.\n'
+    '    """\n'
+    '    return await _call(\n'
+    '        "/tools/gmail/send", {"to": to, "subject": subject, "body": body, "process_id": process_id}\n'
+    '    )\n'
 ))
 story.append(bl(
     "It's an HTTP POST to /tools/gmail/send — the exact same route covered in the FastAPI reference, "
     "hitting the exact same _propose() → start_action() → propose_node → approval_node[interrupt()] "
-    "pipeline covered in the Action Graph reference. <b>This layer adds no new enforcement, and needs "
-    "none.</b> An “adversarial agent” — one that hallucinates, or is deliberately prompted to try to "
-    "send an email without approval — has no more power here than a malicious script hitting the REST "
-    "API directly, because both go through the identical server-side gate. Nothing about exposing these "
-    "as MCP tools required re-deriving or re-implementing that guarantee."
+    "pipeline covered in the Action Graph reference. The server-side gate guarantees that nothing executes "
+    "until <i>someone</i> calls the decision route. It cannot tell <i>who</i> that someone is — so the "
+    "gate is only meaningful if the caller that proposes a write can't also be the one that approves it."
+))
+story.append(bl(
+    "That is the one thing this layer has to get right, and it gets it right by omission. This package "
+    "<b>originally shipped with a decide_action tool</b> that called the decision route — which meant an "
+    "LLM agent (hallucinating, or deliberately prompt-injected by the email it was reading) could propose a "
+    "write and approve it in the same breath, turning a human approval gate into an agent-only loop. It was "
+    "removed. Today an agent here has strictly less power than a human with an API key: it can read, and "
+    "it can propose, but every proposal waits for a decision that has to come from outside this process."
 ))
 
 # 7
@@ -240,32 +264,57 @@ story.append(bl(
 ))
 
 # 8
-story.append(h1("8. Pattern: decide_action — the MCP-layer twin of the one shared decision route"))
+story.append(h1("8. Pattern: action_status — read-only progress instead of a decision tool"))
+story.append(bl(
+    "An agent that proposed a write still needs to know what happened to it. Instead of a decision tool, "
+    "it gets action_status, which reads two existing read-only routes and can't change anything:"
+))
 story.append(code_block(
     "@mcp.tool()\n"
-    "async def decide_action(action_id: str, approved: bool) -> dict[str, Any]:\n"
-    '    """Approve or reject a pending write proposed by gmail_send,\n'
-    "    calendar_create_event, excel_write, salesforce_create/update, or\n"
-    "    jira_create/update (its action_id from that call's response).\n"
-    "    Nothing in the real system happens until this is called with\n"
-    "    approved=true; approved=false discards it -- nothing is\n"
-    '    sent/created/written either way.\n'
-    '    """\n'
-    '    return await _call(f"/tools/actions/{action_id}/decision", {"approved": approved})\n'
+    "async def action_status(action_id: str) -> dict[str, Any]:\n"
+    '    """Read-only: the current status of a write proposed by\n'
+    "    gmail_send, calendar_create_event, excel_write, drive_upload/\n"
+    "    update, salesforce_create/update or jira_create/update ...\n"
+    '    This tool cannot approve or reject anything."""\n'
+    "    try:\n"
+    '        pending = await client.get(f"/processes/{action_id}/pending")\n'
+    "        if pending:\n"
+    "            return {\n"
+    '                "action_id": action_id,\n'
+    '                "state": "awaiting_human_decision",\n'
+    '                "pending": [{"tool": p.get("tool"), "description": p.get("description")} for p in pending],\n'
+    "            }\n"
+    '        status = await client.get(f"/processes/{action_id}/status")\n'
+    "    except ConnectorAPIError as exc:\n"
+    "        raise ToolError(str(exc)) from exc\n"
+    '    return {"action_id": action_id, "state": status.get("stage"), "result": status.get("result")}\n'
 ))
 story.append(bl(
-    "Exactly one decide_action tool, same as exactly one shared POST /tools/actions/{action_id}/decision "
-    "route in tools_routes.py — this layer really is a mechanical, one-tool-per-route mirror of the "
-    "REST contract, and that claim is directly tested, not just asserted:"
+    "Two details worth noticing. While a human hasn't decided yet, the state is the literal string "
+    "awaiting_human_decision — the agent is told in plain words that the next move isn't its own. And the "
+    "pending entries are trimmed to tool and description: the state store's own internal row id is dropped, "
+    "so it can never be mistaken for the action_id (a mix-up that caused a real bug in the orchestrator "
+    "repo)."
 ))
+story.append(bl("The absence of a decision tool is tested, not just asserted — a regression guard that fails if one comes back:"))
 story.append(code_block(
-    "async def test_lists_one_tool_per_tools_route(tmp_path: Path) -> None:\n"
-    "    mcp, *_ = _mcp(tmp_path)\n"
-    "    tools = await mcp.list_tools()\n"
-    "    names = {t.name for t in tools}\n"
-    '    assert names == {"gmail_search", "gmail_read", "gmail_send", ..., "decide_action"}\n'
+    "async def test_no_tool_can_decide_an_action(tmp_path: Path) -> None:\n"
+    '    """Regression guard: the agent behind this MCP server must never be\n'
+    "    able to approve or reject its own proposed writes. No tool may be\n"
+    '    named like a decision, and none may reach the /decision route."""\n'
+    "    mcp, *_ = _mcp(tmp_path)\n\n"
+    "    names = {t.name for t in await mcp.list_tools()}\n"
+    '    assert not {n for n in names if any(w in n for w in ("decide", "approve", "reject"))}\n\n'
+    "    source = Path(build_server.__code__.co_filename).read_text()\n"
+    '    code_only = "\\n".join(line for line in source.splitlines() if not line.lstrip().startswith("#"))\n'
+    '    assert \'"/tools/actions/\' not in code_only and "/decision\\"" not in code_only\n'
 ))
-story.append(bl("Eighteen tools, one call to mcp.list_tools(), compared against the exact expected set — the clearest possible proof that this layer adds no hidden capabilities and drops none."))
+story.append(bl(
+    "It checks two independent things: no tool <i>named</i> like a decision, and no code path in "
+    "server.py that <i>reaches</i> the decision route under any name. A companion test, "
+    "test_lists_one_tool_per_tools_route, pins the exact set of 22 tool names, so a new tool can't be added "
+    "without someone looking at the list."
+))
 
 # 9
 story.append(h1("9. Pattern: testing through the real protocol layer, over an in-process transport"))
@@ -300,6 +349,20 @@ story.append(bl(
     "mechanisms (Depends() overrides, closures/factories, transport injection), the same underlying "
     "idea each time."
 ))
+story.append(bl(
+    "Since the MCP server has no way to approve anything, the tests that check a write really executes "
+    "need a stand-in for the human. It talks to the REST API directly, never through an MCP tool:"
+))
+story.append(code_block(
+    "async def _human_decides(app, action_id: str, approved: bool) -> dict:\n"
+    '    """Stands in for the human-facing review surface: the decision goes\n'
+    "    straight to the REST API, never through an MCP tool -- the agent\n"
+    '    has no tool that can approve its own writes."""\n'
+    '    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://testserver") as human:\n'
+    '        response = await human.post(f"/tools/actions/{action_id}/decision", json={"approved": approved})\n'
+    "    assert response.status_code == 200, response.text\n"
+    "    return response.json()\n"
+))
 
 # 10 walkthrough
 story.append(h1("10. Walkthrough: one MCP tool call, traced across all five layers"))
@@ -313,10 +376,10 @@ trace = [
     ["3", "FastAPI", "gmail_send route: _tool(tools, \"gmail\") fail-fast check, then _propose() → start_action()."],
     ["4", "Action Graph", "propose_node records a pending action (State Store: add_pending_action, logs \"action_proposed\"); approval_node hits interrupt(), the graph pauses."],
     ["5", "FastAPI → MCP", "RunOutcomeResponse with pending_action set flows back as JSON; gmail_send hands it back as structured_content — action_id + pending_action visible to the agent, nothing sent."],
-    ["6", "MCP (later)", "Agent (or the human behind it) calls decide_action(action_id, approved=True)."],
-    ["7", "FastAPI", "decide_action route → resume_process() → Command(resume={\"approved\": True}) into the same cached graph thread."],
+    ["6", "MCP (polling)", "The agent calls action_status(action_id): GET /processes/{id}/pending is non-empty, so it sees state=\"awaiting_human_decision\". It has no tool to change that."],
+    ["7", "Human, outside MCP", "A person reviews the proposal on a human-facing review surface, which calls POST /tools/actions/{action_id}/decision with approved=true → resume_process() → Command(resume={\"approved\": True}) into the same graph thread."],
     ["8", "Action Graph", "approval_node replays, interrupt() returns immediately, State Store: resolve_pending_action logs \"action_approved\"; execute_node runs, decision=True → real branch: GmailTool.send_email(..., dry_run=False) fires — Connector Layer's placeholder-domain guard already passed, require_dry_run_guard logs \"action_executed\"."],
-    ["9", "All the way back", "final_result with executed: true flows back through FastAPI → ConnectorClient → decide_action's return value → the agent sees the email was actually sent."],
+    ["9", "MCP (polling)", "The agent's next action_status(action_id) finds nothing pending, reads GET /processes/{id}/status, and sees state=\"done\" with result.executed = true."],
 ]
 tw_rows = [[Paragraph(f"<b>{n}</b>", styles["tablecell"]), Paragraph(f"<b>{esc(l)}</b>", styles["tablecell"]), Paragraph(esc(t), styles["tablecell"])] for n, l, t in trace]
 twt = Table(tw_rows, colWidths=[0.3 * inch, 0.95 * inch, USABLE_W - 1.25 * inch])
@@ -328,7 +391,7 @@ twt.setStyle(TableStyle([
     ("BOX", (0, 0), (-1, -1), 0.8, CODE_BORDER),
 ]))
 story.append(twt)
-story.append(bl("Nine steps, five layers, one gate (step 4/8) that nothing in this chain has the power to skip."))
+story.append(bl("Nine steps, five layers, one gate (steps 4 and 8). Step 7 is the only one that can open it, and it's the only step that doesn't go through the MCP server."))
 
 # 11 config
 story.append(h1("11. Configuration and transport surface"))
@@ -344,8 +407,9 @@ story.append(code_block(
     "    mcp.run(transport=transport)\n"
 ))
 story.append(bl(
-    "Two environment variables control everything: APM_CONNECTORS_BASE_URL (which /tools/* server to "
-    "talk to — defaults to local) and APM_CONNECTORS_MCP_TRANSPORT (stdio by default, matching a "
+    "Three environment variables control everything: APM_CONNECTORS_BASE_URL (which /tools/* server to "
+    "talk to — defaults to local), APM_CONNECTORS_API_KEY (the bearer token to send, only needed once that "
+    "server has APM_API_KEYS set) and APM_CONNECTORS_MCP_TRANSPORT (stdio by default, matching a "
     "locally-configured agent host like Claude Desktop/Code; sse or streamable-http for a remote "
     "reasoning layer connecting over the network instead). No other configuration surface exists."
 ))
@@ -360,11 +424,13 @@ tool_rows = [
     ["calendar_create_event", "write", "POST /tools/calendar/create-event"],
     ["excel_worksheets, excel_read", "read", "POST /tools/excel/{worksheets,read}"],
     ["excel_write", "write", "POST /tools/excel/write"],
+    ["drive_list, drive_read", "read", "POST /tools/drive/{list,read}"],
+    ["drive_upload, drive_update", "write", "POST /tools/drive/{upload,update}"],
     ["salesforce_query, salesforce_read", "read", "POST /tools/salesforce/{query,read}"],
     ["salesforce_create, salesforce_update", "write", "POST /tools/salesforce/{create,update}"],
     ["jira_search, jira_read", "read", "POST /tools/jira/{search,read}"],
     ["jira_create, jira_update", "write", "POST /tools/jira/{create,update}"],
-    ["decide_action", "shared decision", "POST /tools/actions/{action_id}/decision"],
+    ["action_status", "read", "GET /processes/{id}/pending, then GET /processes/{id}/status"],
 ]
 inv_rows = []
 for i, r in enumerate(tool_rows):
@@ -387,7 +453,11 @@ it.setStyle(TableStyle([
     ("BOX", (0, 0), (-1, -1), 0.8, CODE_BORDER),
 ]))
 story.append(it)
-story.append(bl("18 tools, exactly mirroring the FastAPI reference's route table — this is the same contract, in a different vocabulary, for a different kind of caller."))
+story.append(bl(
+    "22 tools: one per /tools/* data route, plus the read-only action_status. The one route deliberately "
+    "<b>not</b> exposed is POST /tools/actions/{action_id}/decision — the same contract as the FastAPI "
+    "reference's route table, minus the step that has to stay a human's."
+))
 
 # 13 vocab
 story.append(h1("13. Vocabulary cheat-sheet"))
@@ -399,6 +469,8 @@ vocab = [
     ["httpx.ASGITransport", "Routes an httpx client's calls directly into an ASGI app object in-process, no socket — the testing hook that lets this layer's tests exercise real FastAPI route handlers with no live server."],
     ["structured_content", "The typed result payload an MCP tool call returns to the calling agent."],
     ["ToolError / is_error", "MCP's mechanism for surfacing a failure to the agent as a clean, structured error result instead of a raw exception."],
+    ["Approval boundary", "The rule that the caller who proposes a write can never be the one who approves it. Here: no MCP tool reaches the decision route; a human does, from outside."],
+    ["action_status", "The agent's only window onto a proposed write's outcome — read-only, reporting awaiting_human_decision until a human decides."],
 ]
 vocab_rows = [["<b>Term</b>", "<b>Meaning here</b>"]] + vocab
 vt_rows = [[Paragraph(f"<font name='Courier'><b>{esc(r[0])}</b></font>" if i > 0 else r[0], styles["tablecell"]),
@@ -417,12 +489,12 @@ story.append(vt)
 
 story.append(Spacer(1, 10))
 story.append(bl(
-    "That's the whole layer — two small files, ~380 lines total — and it adds exactly one thing to "
+    "That's the whole layer — two small files, ~470 lines total — and it adds exactly one thing to "
     "everything covered before it: a natural-language-shaped front door for an LLM agent, sitting "
-    "entirely outside the trust boundary, with zero new privilege and zero new enforcement code, "
-    "because the one guarantee that matters — a write cannot execute without a separate, later, "
-    "human-approved call — was already sitting one layer down, and works identically no matter what's "
-    "calling it."
+    "entirely outside the trust boundary, with zero new privilege and zero new enforcement code. The one "
+    "guarantee that matters — a write cannot execute without a separate, later, human-approved call — "
+    "already sits one layer down. This layer's only job is not to undermine it, which it does by never "
+    "giving the agent a way to make that call itself."
 ))
 
 OUT.parent.mkdir(parents=True, exist_ok=True)

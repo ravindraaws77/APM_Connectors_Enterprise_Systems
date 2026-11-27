@@ -36,7 +36,7 @@ story.append(Paragraph("Connector Layer — apm_connectors/tools/", styles["titl
 story.append(Paragraph(
     "The Python constructs this layer adds on top of the FastAPI/Action Graph docs, a from-zero "
     "tutorial on why a common connector interface exists, a complete deep dive into this repo's "
-    "connectors, a per-tool reference covering all five (Gmail, Calendar, Excel, Salesforce, Jira) and "
+    "connectors, a per-tool reference covering all six (Gmail, Calendar, Excel, Drive, Salesforce, Jira) and "
     "how they interact, and the design patterns they use — written as a standalone reference, "
     "including for interview prep.",
     styles["subtitle"],
@@ -212,9 +212,9 @@ story.append(rule())
 # ---------------------------------------------------------------------------
 story.append(h1("Part 1 — Connector-interface design, from zero"))
 
-story.append(h2("1.1 The problem: five external systems, one caller"))
+story.append(h2("1.1 The problem: six external systems, one caller"))
 story.append(bl(
-    "Gmail, Google Calendar, Excel, Salesforce, and Jira each have their own SDK, their own "
+    "Gmail, Google Calendar, Excel, Google Drive, Salesforce, and Jira each have their own SDK, their own "
     "authentication scheme, their own data shapes. Without a shared interface, the Action Graph's "
     "execute_node (see that doc, §2.3) would need to know, in detail, how to call each one — an "
     "if/elif chain checking which connector it's dealing with, one branch per system, growing every "
@@ -338,22 +338,29 @@ story.append(code_block(
     "        self._state = state\n\n"
     "    def can(self, capability: Capability) -> bool:\n"
     "        return capability in self.capabilities\n\n"
-    "    def _log(self, process_id, event_type, summary, details=None) -> None:\n"
+    "    def _log(self, process_id, event_type, summary, details=None, caller=None) -> None:\n"
     "        self._state.log_event(process_id=process_id, tool=self.name,\n"
-    "            event_type=event_type, summary=summary, details=details or {})\n\n"
+    "            event_type=event_type, summary=summary, details=details or {}, caller=caller)\n\n"
     "    @abstractmethod\n"
     "    def health_check(self) -> bool:\n"
     '        """... Must never raise -- return False on failure ..."""\n\n'
     "    def require_dry_run_guard(self, dry_run: bool, process_id: str, summary: str) -> None:\n"
     "        event_type = \"action_executed\" if not dry_run else \"action_proposed\"\n"
-    "        self._log(process_id, event_type, summary, {\"dry_run\": dry_run})\n"
+    "        self._log(process_id, event_type, summary, {\"dry_run\": dry_run})\n\n"
+    "    def record_failure(self, process_id, summary, details=None, caller=None) -> None:\n"
+    '        """Call from an except block when a connector call raises ... Never\n'
+    '        suppresses the exception -- callers still re-raise after logging."""\n'
+    "        self._log(process_id, \"action_failed\", summary, details, caller)\n"
 ))
 story.append(bl(
-    "Four things every subclass inherits for free: a constructor that stashes the shared "
+    "Five things every subclass inherits for free: a constructor that stashes the shared "
     "<font name='Courier'>StateStore</font>; <font name='Courier'>_log</font>, the single audit-trail "
-    "write path every public method is expected to funnel through; "
+    "write path every public method is expected to funnel through, which also records the authenticated "
+    "<font name='Courier'>caller</font> when the API's auth is on; "
     "<font name='Courier'>require_dry_run_guard</font>, called at the top of every write/action method "
-    "(§1.3); and the <font name='Courier'>@abstractmethod health_check</font> every connector must "
+    "(§1.3); <font name='Courier'>record_failure</font>, which a route or the action graph's execute_node "
+    "calls when a connector call raises, so a real failure leaves an <font name='Courier'>action_failed</font> "
+    "row instead of only a 502; and the <font name='Courier'>@abstractmethod health_check</font> every connector must "
     "implement (§0.1) — deliberately required to <i>never raise</i>, so a UI can poll every "
     "connector's status in a loop without one bad credential crashing the whole check."
 ))
@@ -489,13 +496,13 @@ story.append(rule())
 # ---------------------------------------------------------------------------
 # PART 3 — THE OTHER FOUR CONNECTORS, AND HOW THE WHOLE LAYER INTERACTS
 # ---------------------------------------------------------------------------
-story.append(h1("Part 3 — The other four connectors, and how the whole layer interacts"))
+story.append(h1("Part 3 — The other five connectors, and how the whole layer interacts"))
 story.append(bl(
-    "Gmail (§2.4-2.6) was the worked example because it's the smallest complete one. The other four "
-    "— Calendar, Excel, Salesforce, Jira — follow the exact same BaseTool shape (§2.3): a Protocol-"
+    "Gmail (§2.4-2.6) was the worked example because it's the smallest complete one. The other five "
+    "— Calendar, Excel, Salesforce, Jira, Drive — follow the exact same BaseTool shape (§2.3): a Protocol-"
     "typed client, a dataclass for normalized results, read methods that run immediately, write/action "
     "methods gated by dry_run + require_dry_run_guard. What's actually worth knowing about each is "
-    "where it differs — its auth mechanism and its specific quirks — plus how all five get wired "
+    "where it differs — its auth mechanism and its specific quirks — plus how all six get wired "
     "together into one running server."
 ))
 
@@ -515,7 +522,7 @@ story.append(bl(
     "RFC3339 datetimes. <font name='Courier'>ACTION</font> rather than plain "
     "<font name='Courier'>WRITE</font> here — same as Gmail — because creating an event, like sending "
     "an email, triggers a one-shot side effect rather than overwriting something that already exists "
-    "(contrast with Excel/Salesforce/Jira below, §3.5)."
+    "(contrast with Excel/Drive/Salesforce/Jira below, §3.6)."
 ))
 
 story.append(h2("3.2 Excel (local file or Google Drive) — one tool, two interchangeable sources"))
@@ -569,7 +576,7 @@ story.append(bl(
     "manage at all, unlike Gmail/Calendar/Excel-on-Drive."
 ))
 
-story.append(h2("3.4 Jira — the simplest auth of the five"))
+story.append(h2("3.4 Jira — the simplest auth of the six"))
 story.append(code_block(
     "class JiraClient(Protocol):\n"
     "    def search_issues(self, jql: str, max_results: int) -> list[dict[str, Any]]: ...\n"
@@ -583,7 +590,7 @@ story.append(code_block(
 story.append(bl(
     "<font name='Courier'>search_issues</font> runs a JQL query; "
     "<font name='Courier'>create_issue</font>/<font name='Courier'>update_issue</font> are the writes. "
-    "Auth here is the simplest of all five: an Atlassian API token sent as HTTP Basic auth (account "
+    "Auth here is the simplest of all six: an Atlassian API token sent as HTTP Basic auth (account "
     "email + token) on every request — no token exchange, no expiry to manage, nothing to cache. Two "
     "quirks <font name='Courier'>JiraRestClient</font> works around, both found by testing against a "
     "real Jira Cloud site rather than just reading the docs: Jira Cloud's newer "
@@ -593,16 +600,56 @@ story.append(bl(
     "<font name='Courier'>ORDER BY</font> — and it omits <font name='Courier'>key</font>/"
     "<font name='Courier'>fields</font> from results unless a <font name='Courier'>fields</font> "
     "param is passed explicitly, so <font name='Courier'>search_issues</font> always requests "
-    "<font name='Courier'>fields: [\"*all\"]</font> to match <font name='Courier'>get_issue</font>."
+    "<font name='Courier'>fields: [\"*all\"]</font> to match <font name='Courier'>get_issue</font>. "
+    "A third: Jira Cloud's API v3 only accepts a <font name='Courier'>description</font> in Atlassian "
+    "Document Format, so <font name='Courier'>create_issue</font>/<font name='Courier'>update_issue</font> "
+    "convert a plain-string description with <font name='Courier'>_text_to_adf</font> before sending, "
+    "leaving one that's already ADF untouched. A caller (or an agent) can pass ordinary text."
 ))
 
-story.append(h2("3.5 All five, side by side"))
+story.append(h2("3.5 Drive — documents, scoped to one folder"))
+story.append(code_block(
+    "class DriveTool(BaseTool):\n"
+    "    name = \"drive\"\n"
+    "    capabilities = frozenset({Capability.READ, Capability.WRITE})\n\n"
+    "    def __init__(self, state: StateStore, client: DriveClient, folder_id: str) -> None: ...\n\n"
+    "    def _folder_query(self, extra: str | None = None) -> str:\n"
+    "        query = f\"'{self._folder_id}' in parents and trashed = false\"\n"
+    "        return f\"{query} and {extra}\" if extra else query\n\n"
+    "    def _require_in_folder(self, metadata: dict[str, Any], file_id: str) -> None:\n"
+    "        parents = metadata.get(\"parents\") or []\n"
+    "        if self._folder_id not in parents:\n"
+    "            raise PermissionError(\n"
+    "                f\"Drive file {file_id} is not inside the configured folder \"\n"
+    "                f\"({self._folder_id}) -- refusing to touch it.\")\n"
+))
+story.append(bl(
+    "Distinct from Excel's Drive source (§3.2), which only reads and writes cell ranges in one workbook: "
+    "<font name='Courier'>DriveTool</font> handles whole documents such as contracts and purchase orders "
+    "(<font name='Courier'>list_files</font>/<font name='Courier'>read_file</font>, and the writes "
+    "<font name='Courier'>upload_file</font>/<font name='Courier'>update_file</font>). Content moves as "
+    "base64 in the JSON body, with no chunking for very large files — a known gap recorded in "
+    "<font name='Courier'>docs/capability-map.md</font>."
+))
+story.append(bl(
+    "The interesting part is the guardrail. Like Excel-on-Drive, it needs the full "
+    "<font name='Courier'>drive</font> OAuth scope, which can reach every file in the account. So the "
+    "connector narrows itself: every listing is a query inside <font name='Courier'>APM_DRIVE_FOLDER_ID</font>, "
+    "every upload is created in that folder, and <font name='Courier'>read_file</font>/"
+    "<font name='Courier'>update_file</font> check the file's <font name='Courier'>parents</font> first and "
+    "raise <font name='Courier'>PermissionError</font> for anything outside it. It's least privilege "
+    "enforced in code, on top of a broad grant. Because it requests exactly the same scope as "
+    "Excel-on-Drive, the two share one token file and one consent screen."
+))
+
+story.append(h2("3.6 All six, side by side"))
 story.append(simple_table(
     [
         ["<b>Tool</b>", "<b>Capabilities</b>", "<b>Read methods</b>", "<b>Write/action methods</b>"],
         ["gmail", "READ, ACTION", "search_emails, read_message", "send_email"],
         ["google_calendar", "READ, ACTION", "search_events, read_event", "create_event"],
         ["excel_file", "READ, WRITE", "list_worksheets, read_range", "write_range"],
+        ["drive", "READ, WRITE", "list_files, read_file", "upload_file, update_file"],
         ["salesforce", "READ, WRITE", "query_records, get_record", "create_record, update_record"],
         ["jira", "READ, WRITE", "search_issues, get_issue", "create_issue, update_issue"],
     ],
@@ -611,15 +658,15 @@ story.append(simple_table(
 story.append(bl(
     "The <font name='Courier'>ACTION</font> vs <font name='Courier'>WRITE</font> split lines up with a "
     "real distinction: Gmail/Calendar trigger a one-shot side effect (send, create-and-notify), while "
-    "Excel/Salesforce/Jira create-or-overwrite a persistent record you could just as easily read back "
+    "Excel/Drive/Salesforce/Jira create-or-overwrite a persistent record you could just as easily read back "
     "afterward. Nothing in the code branches on that distinction today — it's documentation of intent "
     "via <font name='Courier'>Capability</font> (§0.3, §2.1), not enforced behavior."
 ))
 
-story.append(h2("3.6 How five independent connectors become one dict[str, BaseTool]"))
+story.append(h2("3.7 How six independent connectors become one dict[str, BaseTool]"))
 story.append(bl(
     "<font name='Courier'>api.dependencies.get_tools()</font> is where the connector layer stops being "
-    "five separate modules and becomes the one object the rest of the system depends on:"
+    "six separate modules and becomes the one object the rest of the system depends on:"
 ))
 story.append(code_block(
     "@lru_cache\n"
@@ -635,7 +682,7 @@ story.append(code_block(
     "    excel_tool = build_configured_excel_tool(state, settings)\n"
     "    if excel_tool is not None:\n"
     "        tools[\"excel_file\"] = excel_tool\n"
-    "    # ...salesforce, jira follow the same if-not-None pattern\n"
+    "    # ...drive, salesforce, jira follow the same if-not-None pattern\n"
     "    return tools\n"
 ))
 story.append(bl(
@@ -647,23 +694,25 @@ story.append(bl(
     "factory-function shape, applied to two tools at once) requests both tools' OAuth scopes in a "
     "single consent, because requesting them separately against the same token file would have each "
     "overwrite the other's cached token (google_auth.py's docstring calls this out directly — a real "
-    "bug, not a hypothetical). Excel's Drive source shares the same Google OAuth client id/secret but "
-    "deliberately writes to its <i>own</i> token-cache file for exactly the same reason. Third, "
+    "bug, not a hypothetical). Excel's Drive source and the Drive connector share the same Google OAuth "
+    "client id/secret but deliberately write to their <i>own</i> token-cache file (one file for both, "
+    "since they request the identical scope) for exactly the same reason. Third, "
     "<b>execute_node (Action Graph doc §2.3) never special-cases any of this</b> — "
     "<font name='Courier'>tools[proposed[\"tool\"]]</font> plus "
     "<font name='Courier'>getattr(tool, proposed[\"method\"])</font> dispatches to whichever of the "
-    "five connectors and whichever of its methods a caller named, generically, because every one of "
+    "six connectors and whichever of its methods a caller named, generically, because every one of "
     "them honors the same BaseTool shape. That genericity — not any per-tool logic — is the entire "
     "point of Part 1's \"one common interface\" argument (§1.1)."
 ))
 
-story.append(h2("3.7 Auth, side by side"))
+story.append(h2("3.8 Auth, side by side"))
 story.append(simple_table(
     [
         ["<b>Tool</b>", "<b>Auth mechanism</b>", "<b>Token caching</b>"],
         ["gmail", "Google OAuth2, user consent", ".google_token.json, shared with google_calendar"],
         ["google_calendar", "Google OAuth2, user consent (same flow as gmail)", "same file as gmail"],
         ["excel_file (Drive)", "Google OAuth2, user consent, full drive scope", "own file, .google_drive_token.json"],
+        ["drive", "Google OAuth2, user consent, full drive scope", "same file as excel_file (Drive)"],
         ["excel_file (local)", "none", "n/a"],
         ["salesforce", "OAuth2 Client Credentials (server-to-server)", "none -- short-lived, re-requested each process start"],
         ["jira", "Atlassian API token, HTTP Basic", "none -- sent on every request"],
@@ -671,7 +720,7 @@ story.append(simple_table(
     [1.3 * inch, USABLE_W - 1.3 * inch - 2.0 * inch, 2.0 * inch],
 ))
 story.append(bl(
-    "The pattern across all five: only Gmail/Calendar/Excel-on-Drive need an interactive human consent "
+    "The pattern across all six: only Gmail/Calendar/Excel-on-Drive/Drive need an interactive human consent "
     "step at all, and only because they act as a real Google end user. Salesforce and Jira are both "
     "server-to-server from the start — no human ever \"logs in\" as them, which is also why their "
     "factories (§2.7's shape) need no <font name='Courier'>token_path</font> argument at all."
@@ -710,7 +759,7 @@ patterns = [
      "WorkbookSource: LocalWorkbookSource vs. GoogleDriveWorkbookSource (§3.2)",
      "ExcelFileTool reads/writes bytes through one interface without caring which backing store it is -- the source is swapped at construction time, not branched on at call time."],
     ["Optional component wiring",
-     "get_tools() (§3.6) -- each connector's build_configured_*_tool returns None when unconfigured",
+     "get_tools() (§3.7) -- each connector's build_configured_*_tool returns None when unconfigured",
      "A deployment missing one tool's credentials loses only that tool's routes (a per-route 503), never the whole API failing to start."],
 ]
 story.append(simple_table(patterns, [1.5 * inch, 1.7 * inch, USABLE_W - 3.2 * inch]))
@@ -762,7 +811,7 @@ qa = [
      "never requires googleapiclient to be installed. Only code paths that actually construct a real "
      "GoogleApiGmailClient need that dependency present (§2.7, same reasoning as the FastAPI doc's "
      "Postgres-driver example)."),
-    ("Q: If you were adding a sixth connector, what would you actually have to implement?",
+    ("Q: If you were adding a seventh connector, what would you actually have to implement?",
      "A: Inherit from BaseTool, set name and capabilities, implement health_check (required by "
      "@abstractmethod), route every public method through self._log, and call "
      "require_dry_run_guard at the top of every write/action method before checking dry_run. If the "
@@ -776,7 +825,7 @@ qa = [
      "token -- google_auth.py's docstring documents this as a real failure mode, not a hypothetical. "
      "build_gmail_and_calendar_tools requests every scope both tools need in one call, so one consent "
      "covers both, and if that fails (no Google client id/secret configured), both are omitted "
-     "together rather than one succeeding and the other silently missing (§3.6)."),
+     "together rather than one succeeding and the other silently missing (§3.7)."),
     ("Q: Why does Salesforce use a completely different auth flow from Jira, when both are read/write "
      "connectors over HTTP?",
      "A: They're solving different trust problems. Salesforce's Client Credentials Flow authenticates "
@@ -785,7 +834,7 @@ qa = [
      "Jira's API token is simpler because Atlassian's model ties the token directly to one human "
      "account's existing permissions -- no separate app registration or service-user concept needed. "
      "Neither needs a browser consent step, unlike Gmail/Calendar/Excel-on-Drive, because both are "
-     "server-to-server from the start (§3.7)."),
+     "server-to-server from the start (§3.8)."),
     ("Q: How does Excel support both a local file and a Google Drive file without ExcelFileTool having "
      "two code paths?",
      "A: WorkbookSource (§3.2) is a Protocol with exactly three methods -- describe, read_bytes, "
@@ -829,8 +878,8 @@ story.append(vt)
 
 story.append(Spacer(1, 10))
 story.append(bl(
-    "That's the whole layer: one shared contract (BaseTool), one narrow retry helper, five connectors "
-    "each with their own auth mechanism and quirks (§3.1-3.7) but all identically shaped from the "
+    "That's the whole layer: one shared contract (BaseTool), one narrow retry helper, six connectors "
+    "each with their own auth mechanism and quirks (§3.1-3.8) but all identically shaped from the "
     "outside, and one dict (get_tools()) that wires them into a running server — each connector's "
     "actual write path defended by the same three independent layers, whether it's sending an email or "
     "updating a Salesforce record."
