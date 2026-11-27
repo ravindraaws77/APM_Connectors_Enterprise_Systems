@@ -399,9 +399,249 @@ agent) connected over A2A.
 3. **6.2**, reusing the extraction agent with a new skill.
 4. **6.4**, once Phase 4's auth and injection defenses are in place.
 
+## Phase 7 — agentic design patterns: what APM builds next
+
+**Status: planned, 23 Nov 2026.** The four agentic design patterns
+(reflection, tool use, planning, multi-agent) plus evals and error
+analysis, mapped onto real APM use cases. Two are already in place, the
+others are not built yet:
+
+| Pattern | In APM today | Next use case |
+| --- | --- | --- |
+| Tool use | **Built.** Every `apm_connectors` route is a tool; `apm_orchestrator/tools.py` exposes them on an MCP server; each agent gets a scoped toolbelt (`allowed_tools`) | — |
+| Multi-agent | **Built.** Supervisor (hierarchical pattern) routes to Order-Renewal and Customer-Onboarding, with confidence + rationale logged | UC5 reuses one shared reviewer across agents |
+| Reflection | **Not built.** Outbound notices are fixed templates (`propose_notice_node`, `propose_welcome_notice_node`) | **UC1**, then UC2 |
+| Evals + error analysis | **Partly built.** Supervisor routing golden set + calibration; no case-level or component-level evals | **UC3** |
+| Planning | **Not built, by design.** Case graphs are fixed, deterministic steps | **UC4**, read-only only |
+
+Rules that apply to every use case below (they restate existing
+non-negotiables, nothing new is relaxed):
+
+- **The approval boundary never moves.** An LLM step may draft, check,
+  plan or recommend; any write still goes through an `apm_connectors`
+  write route as a *proposal* and waits for a human decision. No LLM
+  step ever calls the decision route.
+- **The case graph stays the skeleton.** An LLM step is a new *node* with
+  bounded inputs, a structured (JSON) output, a step cap and a
+  deterministic fallback, never a free-running loop that replaces the
+  graph.
+- **Policy is data.** Rubrics, thresholds, step caps and banned phrases
+  live in each agent's `policy.yaml`.
+- **Inbound text is untrusted.** Email bodies, documents and tool results
+  are passed as quoted data, never as instructions; prompts say so.
+- **Every new LLM call site** sets `model` and `max_budget_usd` from
+  `load_settings()`.
+- **Measure before keeping it.** Each use case ships with a small eval
+  (10–20 synthetic cases) that compares *with* vs *without* the new step,
+  as in course lesson 2.4; if it doesn't move the metric, it doesn't stay.
+
+### UC1 — Reflection: drafted renewal notice with a self-check (Order-Renewal)
+
+**Business need.** The renewal notice is a fixed template today. Account
+managers want a short, specific reply to the customer's actual email
+(their question, the scheduled call time, the renewal date), without the
+risk of a wrong date, a price promise or a competitor mention reaching a
+customer.
+
+**Pattern.** Reflection with external feedback (course 2.1, 2.5): draft,
+then check with code first, then an LLM critique against a rubric,
+revise at most twice, otherwise fall back to today's template.
+
+```mermaid
+flowchart LR
+    A[check_blockers] --> B[draft_notice<br/>LLM]
+    B --> C[check_notice<br/>code checks]
+    C -->|all pass| D[review_notice<br/>LLM rubric]
+    C -->|failures| E[revise_notice<br/>LLM, max 2]
+    D -->|all yes| F[propose_notice<br/>approval-gated]
+    D -->|any no| E
+    E --> C
+    E -->|still failing| G[template fallback<br/>+ flag for reviewer]
+    G --> F
+```
+
+- **New nodes** in `agents/order_renewal/case_graph.py`, between
+  `pull_contract` and `propose_notice`: `draft_notice`, `check_notice`,
+  `review_notice`, `revise_notice`.
+- **Code checks (external feedback):** the call date/time in the text
+  equals `state["call_start"]`; the account name matches the verified
+  Salesforce Account; no amount or discount is stated; no name from a
+  `banned_terms` list (competitors); length within `max_words`.
+- **LLM rubric (yes/no, never 1–5):** answers the customer's question;
+  correct call time; no commitments beyond scheduling; professional tone.
+  Rubric and limits in `policy.yaml` under `notice_reflection:`.
+- **The reviewer sees the draft and the check results**, not just the
+  draft. That is the "external feedback" that makes reflection work.
+- **Approval:** unchanged. The human approver sees the final text plus a
+  short "checks passed / fallback used" note in the proposal.
+- **Eval:** 15–20 synthetic inbound renewal emails with hand-written
+  expected facts. Score each final notice on the rubric with code + LLM
+  judge. Report: template baseline vs draft-only vs draft+reflection.
+- **Done when:** the eval runs in nightly CI; reflection beats draft-only
+  on the rubric; zero wrong call times across the set; fallback path
+  unit-tested.
+
+### UC2 — Reflection on extraction: purchase-order intake (Order-Renewal)
+
+Extends roadmap 6.1. After the LLM extracts PO fields, **code validators**
+check them (PO number pattern, `YYYY-MM-DD` dates, amount within the
+`policy.yaml` tolerance of the Salesforce Opportunity amount, currency
+code). Any failure is fed back once for re-extraction with the specific
+error; fields still failing or below the confidence threshold route to a
+human (`jira_create_issue` proposal) instead of a Salesforce update.
+
+- **Eval:** the synthetic PO golden set from 6.1, scored per field.
+  Compare single-pass vs extract+validate+retry.
+- **Done when:** per-field accuracy reported for both variants; no
+  Salesforce update is ever proposed from a field that failed validation.
+
+### UC3 — Evals and error analysis across the whole case (both agents)
+
+**Business need.** Routing is measured; nothing after routing is. When a
+case ends wrongly, nobody can say which step caused it.
+
+**Pattern.** Course Module 4: end-to-end evals, error analysis by counting
+the failing step, then component-level evals on the worst step.
+
+- **Traces:** every case-graph node logs a structured span (case id,
+  node, inputs summary, output summary, latency, cost) — the Phase 3
+  structured-logging work, scoped to case graphs first.
+- **Whole-case eval:** 15–20 synthetic cases per agent run against a
+  recorded/fake connectors client (no live tenants). Each case has an
+  expected end state: stop reason, or the exact sequence of proposed
+  writes and their key fields.
+- **Error analysis sheet:** for every failing case, mark the first node
+  that did worse than a human would. Count by node. Fix the top one.
+- **First component eval:** `verify_account_node` account matching — 20
+  inbound account-name variants (trailing period, case, subsidiaries)
+  against the correct `AccountId` / `ambiguous_account` stop.
+- **Done when:** whole-case eval for both agents in nightly CI; one
+  counted error-analysis table checked into `apm_orchestrator`; the
+  account-matching component eval in the PR-gated subset.
+
+### UC4 — Planning (read-only): account risk questions
+
+**Business need.** Account managers ask open questions that don't fit a
+fixed case: "Is Acme at risk for renewal, and what's blocking it?",
+"Which accounts renewing in the next 30 days have open escalations?"
+
+**Pattern.** Planning with a JSON plan (course 5.1–5.2), limited to
+**read-only tools**, so the extra autonomy carries no write risk.
+
+- **New agent package** `agents/account_insights/`: the LLM returns a
+  JSON plan (`[{step, tool, args}]`) over `salesforce_query_records`,
+  `salesforce_get_record`, `jira_search_issues`, `gmail_search_emails`,
+  `drive_search_files`.
+- **Code validates the plan before running it:** read-only tools only,
+  at most `max_plan_steps` (policy, e.g. 6), SOQL/JQL built from
+  templates in `policy.yaml` with escaped values (the same rules as
+  `verify_account_node`), never free-form query strings.
+- **Output:** an answer with the record IDs it used as citations. A
+  recommended action is a *suggestion* that starts an existing case graph
+  (e.g. an Order-Renewal case), never a direct write.
+- **Supervisor:** a new `delegate_to_account_insights` tool, keeping the
+  required `confidence` + `rationale` fields.
+- **Eval:** 15 questions against a fixture data set with known answers;
+  score answer correctness and citation accuracy; log plan length.
+- **Done when:** eval in nightly CI; plan validator unit-tested against
+  write tools, over-long plans and injected query text.
+
+### UC5 — Multi-agent reuse: one shared outbound-message reviewer
+
+Once UC1 works, lift the reviewer (code checks + rubric review) into a
+shared module, e.g. `apm_orchestrator/reviewers/outbound_message.py`,
+used by Order-Renewal's notice and Customer-Onboarding's welcome notice
+(course 5.4, "reuse agents"). Each agent supplies its own rubric and
+banned terms from its `policy.yaml`. Later it can become the A2A
+reviewer service alongside 6.3's extraction agent.
+
+- **Done when:** both agents call the same reviewer; each has its own
+  eval cases; a rubric change needs no code change.
+
+### UC6 (later) — Planning with code execution: renewal pipeline reports
+
+Replaces the fixed Excel reporting toolbelt with "write pandas over an
+exported Salesforce CSV" for ad-hoc questions (course 5.3). **Only inside
+a sandbox** (Docker/E2B), with the CSV as the only input and no network.
+Not started until UC1–UC4 are done and Phase 4 security work covers code
+execution.
+
+### Build order
+
+| Order | Use case | Pattern | Target |
+| --- | --- | --- | --- |
+| 1 | UC1 drafted renewal notice + self-check | Reflection + external feedback | 24 Nov – 14 Dec |
+| 2 | UC3 traces, whole-case evals, error analysis | Evals | Dec (with the structured-logging work) |
+| 3 | UC2 PO extraction validate-and-retry | Reflection on extraction | Jan (with 6.1) |
+| 4 | UC5 shared reviewer | Multi-agent reuse | Feb |
+| 5 | UC4 account risk questions | Planning, read-only | Feb – Mar |
+| 6 | UC6 pipeline reports via code | Planning with code | After Phase 4 |
+
 ## Rough timeline
 
 Assuming a small team (2-4 engineers) and phases 1-4 overlapping
 rather than strictly sequential: **~14-16 weeks (3.5-4 months)** to a
 real production v1 across both repos. Phase 0 is a hard blocker and
 should land in the first 1-2 weeks.
+
+## Build schedule: Nov 2026 – Jun 2027 (paced with a learning track)
+
+**Status: planned, updated 19 Nov 2026.** A solo, part-time schedule (the
+"Rough timeline" above assumes a 2-4 engineer team) that sequences the
+phases above alongside a learning track. The technical backbone is a
+**DeepLearning.AI Pro** membership (annual; renewal decision due before
+16 Nov 2027): Andrew Ng's *Agentic AI* plus the short courses listed
+below, each picked for the APM work happening the same month. A **live,
+instructor-led program** (shortlist: PracticAI *AI Engineer Bootcamp*
+or Newton School *AI Engineering & FDE*; not yet chosen) adds what
+self-paced courses don't: live teaching, production deployment depth,
+and, for Newton, a client-delivery (FDE) track and career support. When
+it's chosen, its project deadlines get mapped onto the rows below.
+A **Python developer notes course** (self-paced: 19 module PDFs, cheat
+sheets, interview question banks, project lists; registered Nov 2026)
+runs alongside the first two rows. Modules 1–7 and 9 are a quick skim;
+the ones that pay off directly in APM are 10–14 and 17–18 (uv/pip,
+virtual environments, typing + mypy + Pydantic, ruff/black, asyncio,
+pytest, `pyproject.toml`), applied by adding ruff + mypy checks to both
+repos' CI. Module 8 (data structures and algorithms) and the interview
+question banks carry on past December as interview prep for the DSA
+round of AI-engineer/FDE interviews.
+Course names are DeepLearning.AI short courses as titled at the time of
+writing; check the catalog for current versions. Any course or program
+submission uses **synthetic data only**, never records from a real
+Gmail/Salesforce/Jira tenant.
+
+Alongside the build, a small **FDE practice** track uses APM itself as
+the client project: a discovery doc + ROI one-pager for Order-Renewal, a
+write-up of deploying into a client's own cloud account, and a recorded
+demo and pilot with a friendly organisation.
+
+The goal is not just more features but **more robust AI behaviour**:
+every new LLM-driven step lands with its own eval, a confidence signal a
+human can review, and untrusted-input handling, following the patterns
+`apm_orchestrator` already proved out for Supervisor routing (golden
+dataset → nightly eval → `reviewed_correct` calibration).
+
+| When | Learning (DeepLearning.AI Pro + FDE practice) | APM build | Repo | Done when |
+|---|---|---|---|---|
+| **19 Nov – 30 Nov** | *Agentic AI* (Andrew Ng): reflection, tool use, planning, multi-agent, evals/error analysis. Python notes: skim modules 1–7 and 9 | Error analysis on the existing routing eval + calibration batch: list where the Supervisor or case graphs fail and why | orchestrator | A written list of failure categories, each with an eval case or a ticket |
+| **24 Nov – 14 Dec** | Finish the *Agentic AI* videos; Harness Engineering workshop recording | **Phase 7 UC1:** drafted renewal notice with reflection (code checks + rubric review, template fallback) and its with/without eval | orchestrator | UC1 done-when criteria met |
+| **Dec** | *AI Agents in LangGraph*; *Automated Testing for LLMOps*; Python notes modules 10–14 and 17–18, applied as ruff + mypy in CI | **Phase 3 observability, first slice:** structured logging (replace `print()`, request id / caller / latency fields) in both repos. **Phase 5 gap:** a small PR-gated subset of the routing golden set in CI. **6.1 prerequisites:** Gmail attachment read routes (`/tools/gmail/attachments/list` + `/read`, size cap + MIME allowlist, via the `tool-integration` skill); start the synthetic PO golden set (20–30 documents, hand-labelled). FDE practice: Order-Renewal discovery doc + ROI one-pager | both | No bare `print()` in library code; routing subset runs on every PR; attachment routes in `api-contract.md` + `capability-map.md`, dry-run tested |
+| **Jan** | *Building and Evaluating Advanced RAG*; *Improving Accuracy of LLM Applications* | **6.1 PO extraction:** per-field confidence, 2–3 prompt variants compared on the golden set, contract lookup from the Drive folder for reconciliation. Read-only: proposes nothing yet | orchestrator | Per-field accuracy report per prompt variant; nightly eval job extended |
+| **Feb** | *Safe and Reliable AI via Guardrails*; *Red Teaming LLM Applications*; *Long-Term Agentic Memory with LangGraph* | **6.2 onboarding pack** on the Customer-Onboarding agent (checklist in `policy.yaml`, missing/expired doc → approval-gated `gmail_send`). **Phase 4 slice:** prompt-injection defences on email/document text, PII minimisation (pass/fail + reference, never full ID numbers). First live run of a case graph against sandbox tenants. FDE practice: client-cloud deployment write-up | orchestrator | Injection test cases pass; responsible-AI design note written; live run recorded in `FAILURES_AND_LESSONS_LEARNED.md` |
+| **Mar – mid Apr** | *A2A: The Agent2Agent Protocol*; *Evaluating AI Agents*; *MCP: Build Rich-Context AI Apps with Anthropic* | **6.3 A2A extraction agent** (Agent Card, `input-required` → human-review interrupt) called by both Order-Renewal and Customer-Onboarding. **Whole-case evals:** score a case graph's end state and proposed writes, not just routing. OpenTelemetry tracing across Supervisor → agent → connectors | orchestrator (+ connectors for tracing) | Both agents use the shared extractor; case-level eval in nightly CI; one trace spans both repos |
+| **mid Apr – Jun** | *Finetuning Large Language Models*; *Quantization Fundamentals*; GenAI system-design interview prep. FDE practice: recorded demo + pilot | Small-model router experiment scored against the routing golden set (cost vs accuracy). Next business agent (Churn Prevention). Remaining Phase 3 (HTTPS, ECS autoscaling, per-system rate limiting) and 6.4 once Phase 4 auth is in place | both | Router comparison written up; new agent has its own golden set from day one; demo recorded |
+
+**Rules that carry across every row:**
+- A new LLM step doesn't ship without a golden set, a nightly eval, and
+  a confidence field a reviewer can sample — the same shape as
+  `evals/routing_cases.py` + `SupervisorRoutingLog.reviewed_correct`.
+- Text from email, documents, or another agent is untrusted input:
+  schema-validated, never treated as instructions.
+- The approval boundary never moves: no course project, demo, or new
+  agent calls `POST /tools/actions/{id}/decision`.
+- Every new `ClaudeAgentOptions` call site pins `model` and
+  `max_budget_usd` from config (see `apm_orchestrator`'s `CLAUDE.md`).
+- "Done" means live-verified against a sandbox, not just green unit
+  tests; anything learned the hard way goes into
+  `apm_orchestrator`'s `FAILURES_AND_LESSONS_LEARNED.md`.

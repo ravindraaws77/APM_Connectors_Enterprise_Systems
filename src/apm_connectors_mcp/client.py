@@ -69,6 +69,12 @@ class ConnectorClient:
             raise ConnectorAPIError(response.status_code, _extract_detail(response))
         return response.json()
 
+    async def get(self, path: str) -> Any:
+        response = await self._client.get(path)
+        if response.status_code >= 400:
+            raise ConnectorAPIError(response.status_code, _extract_detail(response))
+        return response.json()
+
 
 def _extract_detail(response: httpx.Response) -> str:
     try:

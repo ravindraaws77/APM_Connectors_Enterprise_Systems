@@ -17,6 +17,13 @@ calls are always fine. See `docs/security-guardrails.md`. When adding or
 touching a tool connector, use the `tool-integration` skill in
 `.claude/skills/`.
 
+The MCP server (`src/apm_connectors_mcp/`) must never expose a tool
+that reaches `POST /tools/actions/{action_id}/decision` -- an agent
+that could call it would approve its own writes. It shipped with one
+(`decide_action`) and it was removed; `tests/test_mcp_server.py`'s
+`test_no_tool_can_decide_an_action` guards it. Agents get the
+read-only `action_status` tool instead.
+
 This package has no reasoning of its own — don't add one. If a request
 implies "decide what to do," that decision belongs in a separate
 reasoning/orchestration layer calling this API, not in this repo.

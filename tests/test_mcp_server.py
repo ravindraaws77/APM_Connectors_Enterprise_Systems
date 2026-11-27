@@ -15,7 +15,7 @@ from langgraph.checkpoint.memory import MemorySaver
 from mcp.server.mcpserver.exceptions import ToolError
 
 from apm_connectors.api.app import create_app
-from apm_connectors.api.dependencies import get_action_graph, get_tools
+from apm_connectors.api.dependencies import get_action_graph, get_state_store, get_tools
 from apm_connectors.graph import build_action_graph
 from apm_connectors.state.store import StateStore
 from apm_connectors.tools.calendar_tool import CalendarTool
@@ -68,10 +68,22 @@ def _mcp(
     app = create_app()
     app.dependency_overrides[get_tools] = lambda: tools
     app.dependency_overrides[get_action_graph] = lambda: action_graph
+    app.dependency_overrides[get_state_store] = lambda: store
 
     client = ConnectorClient(base_url="http://testserver", transport=httpx.ASGITransport(app=app))
     mcp = build_server(client)
-    return mcp, store, gmail_client, calendar_client, excel_source, salesforce_client, jira_client
+    return mcp, store, gmail_client, calendar_client, excel_source, salesforce_client, jira_client, app
+
+
+async def _human_decides(app, action_id: str, approved: bool) -> dict:
+    """Stands in for the human-facing review surface: the decision goes
+    straight to the REST API, never through an MCP tool -- the agent
+    has no tool that can approve its own writes.
+    """
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://testserver") as human:
+        response = await human.post(f"/tools/actions/{action_id}/decision", json={"approved": approved})
+    assert response.status_code == 200, response.text
+    return response.json()
 
 
 @pytest.mark.anyio
@@ -103,7 +115,7 @@ async def test_lists_one_tool_per_tools_route(tmp_path: Path) -> None:
         "drive_read",
         "drive_upload",
         "drive_update",
-        "decide_action",
+        "action_status",
     }
 
 
@@ -146,8 +158,8 @@ async def test_unconfigured_tool_raises_tool_error(tmp_path: Path) -> None:
 
 
 @pytest.mark.anyio
-async def test_gmail_send_pauses_then_decide_action_executes(tmp_path: Path) -> None:
-    mcp, store, gmail_client, *_ = _mcp(tmp_path)
+async def test_gmail_send_pauses_then_human_approval_executes(tmp_path: Path) -> None:
+    mcp, store, gmail_client, *_, app = _mcp(tmp_path)
 
     propose = await mcp.call_tool(
         "gmail_send", {"to": "customer@realcorp.io", "subject": "Update", "body": "Hi there."}
@@ -157,25 +169,24 @@ async def test_gmail_send_pauses_then_decide_action_executes(tmp_path: Path) -> 
     assert propose.structured_content["pending_action"] is not None
     assert gmail_client.sent == []
 
-    decide = await mcp.call_tool("decide_action", {"action_id": action_id, "approved": True})
+    decide = await _human_decides(app, action_id, approved=True)
 
-    assert decide.is_error is False
-    assert decide.structured_content["final_result"]["executed"] is True
+    assert decide["final_result"]["executed"] is True
     assert len(gmail_client.sent) == 1
 
 
 @pytest.mark.anyio
 async def test_gmail_send_rejected_does_not_execute(tmp_path: Path) -> None:
-    mcp, store, gmail_client, *_ = _mcp(tmp_path)
+    mcp, store, gmail_client, *_, app = _mcp(tmp_path)
 
     propose = await mcp.call_tool(
         "gmail_send", {"to": "customer@realcorp.io", "subject": "Update", "body": "Hi there."}
     )
     action_id = propose.structured_content["action_id"]
 
-    decide = await mcp.call_tool("decide_action", {"action_id": action_id, "approved": False})
+    decide = await _human_decides(app, action_id, approved=False)
 
-    assert decide.structured_content["final_result"] == {"executed": False, "reason": "rejected"}
+    assert decide["final_result"] == {"executed": False, "reason": "rejected"}
     assert gmail_client.sent == []
 
 
@@ -199,8 +210,8 @@ async def test_salesforce_unconfigured_raises_tool_error(tmp_path: Path) -> None
 
 
 @pytest.mark.anyio
-async def test_salesforce_create_pauses_then_decide_action_executes(tmp_path: Path) -> None:
-    mcp, store, _, _, _, salesforce_client, _ = _mcp(tmp_path)
+async def test_salesforce_create_pauses_then_human_approval_executes(tmp_path: Path) -> None:
+    mcp, store, _, _, _, salesforce_client, _, app = _mcp(tmp_path)
 
     propose = await mcp.call_tool(
         "salesforce_create", {"object_name": "Lead", "fields": {"LastName": "Doe", "Company": "Acme"}}
@@ -210,16 +221,15 @@ async def test_salesforce_create_pauses_then_decide_action_executes(tmp_path: Pa
     assert propose.structured_content["pending_action"] is not None
     assert salesforce_client.created == []
 
-    decide = await mcp.call_tool("decide_action", {"action_id": action_id, "approved": True})
+    decide = await _human_decides(app, action_id, approved=True)
 
-    assert decide.is_error is False
-    assert decide.structured_content["final_result"]["executed"] is True
+    assert decide["final_result"]["executed"] is True
     assert len(salesforce_client.created) == 1
 
 
 @pytest.mark.anyio
 async def test_salesforce_update_rejected_does_not_execute(tmp_path: Path) -> None:
-    mcp, store, _, _, _, salesforce_client, _ = _mcp(tmp_path)
+    mcp, store, _, _, _, salesforce_client, _, app = _mcp(tmp_path)
 
     propose = await mcp.call_tool(
         "salesforce_update",
@@ -227,9 +237,9 @@ async def test_salesforce_update_rejected_does_not_execute(tmp_path: Path) -> No
     )
     action_id = propose.structured_content["action_id"]
 
-    decide = await mcp.call_tool("decide_action", {"action_id": action_id, "approved": False})
+    decide = await _human_decides(app, action_id, approved=False)
 
-    assert decide.structured_content["final_result"] == {"executed": False, "reason": "rejected"}
+    assert decide["final_result"] == {"executed": False, "reason": "rejected"}
     assert salesforce_client.updated == []
 
 
@@ -253,8 +263,8 @@ async def test_jira_unconfigured_raises_tool_error(tmp_path: Path) -> None:
 
 
 @pytest.mark.anyio
-async def test_jira_create_pauses_then_decide_action_executes(tmp_path: Path) -> None:
-    mcp, store, _, _, _, _, jira_client = _mcp(tmp_path)
+async def test_jira_create_pauses_then_human_approval_executes(tmp_path: Path) -> None:
+    mcp, store, _, _, _, _, jira_client, app = _mcp(tmp_path)
 
     propose = await mcp.call_tool(
         "jira_create",
@@ -265,28 +275,75 @@ async def test_jira_create_pauses_then_decide_action_executes(tmp_path: Path) ->
     assert propose.structured_content["pending_action"] is not None
     assert jira_client.created == []
 
-    decide = await mcp.call_tool("decide_action", {"action_id": action_id, "approved": True})
+    decide = await _human_decides(app, action_id, approved=True)
 
-    assert decide.is_error is False
-    assert decide.structured_content["final_result"]["executed"] is True
+    assert decide["final_result"]["executed"] is True
     assert len(jira_client.created) == 1
 
 
 @pytest.mark.anyio
 async def test_jira_update_rejected_does_not_execute(tmp_path: Path) -> None:
-    mcp, store, _, _, _, _, jira_client = _mcp(tmp_path)
+    mcp, store, _, _, _, _, jira_client, app = _mcp(tmp_path)
 
     propose = await mcp.call_tool(
         "jira_update", {"issue_key": "OPS-1", "fields": {"summary": "Updated title"}}
     )
     action_id = propose.structured_content["action_id"]
 
-    decide = await mcp.call_tool("decide_action", {"action_id": action_id, "approved": False})
+    decide = await _human_decides(app, action_id, approved=False)
 
-    assert decide.structured_content["final_result"] == {"executed": False, "reason": "rejected"}
+    assert decide["final_result"] == {"executed": False, "reason": "rejected"}
     assert jira_client.updated == []
 
 
 @pytest.fixture
 def anyio_backend() -> str:
     return "asyncio"
+
+
+@pytest.mark.anyio
+async def test_no_tool_can_decide_an_action(tmp_path: Path) -> None:
+    """Regression guard: the agent behind this MCP server must never be
+    able to approve or reject its own proposed writes. No tool may be
+    named like a decision, and none may reach the /decision route.
+    """
+    mcp, *_ = _mcp(tmp_path)
+
+    names = {t.name for t in await mcp.list_tools()}
+    assert not {n for n in names if any(w in n for w in ("decide", "approve", "reject"))}
+
+    source = Path(build_server.__code__.co_filename).read_text()
+    code_only = "\n".join(line for line in source.splitlines() if not line.lstrip().startswith("#"))
+    assert '"/tools/actions/' not in code_only and "/decision\"" not in code_only
+
+
+@pytest.mark.anyio
+async def test_action_status_reports_pending_then_resolved(tmp_path: Path) -> None:
+    mcp, store, gmail_client, *_, app = _mcp(tmp_path)
+
+    propose = await mcp.call_tool(
+        "gmail_send", {"to": "customer@realcorp.io", "subject": "Update", "body": "Hi there."}
+    )
+    action_id = propose.structured_content["action_id"]
+
+    pending = await mcp.call_tool("action_status", {"action_id": action_id})
+    assert pending.is_error is False
+    assert pending.structured_content["state"] == "awaiting_human_decision"
+    assert "id" not in pending.structured_content["pending"][0]
+    assert gmail_client.sent == []
+
+    await _human_decides(app, action_id, approved=True)
+
+    resolved = await mcp.call_tool("action_status", {"action_id": action_id})
+    assert resolved.is_error is False
+    assert resolved.structured_content["state"] == "done"
+    assert resolved.structured_content["result"]["executed"] is True
+    assert len(gmail_client.sent) == 1
+
+
+@pytest.mark.anyio
+async def test_action_status_unknown_id_is_a_tool_error(tmp_path: Path) -> None:
+    mcp, *_ = _mcp(tmp_path)
+
+    with pytest.raises(ToolError, match="404"):
+        await mcp.call_tool("action_status", {"action_id": "no-such-action"})
