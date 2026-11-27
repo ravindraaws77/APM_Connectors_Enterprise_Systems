@@ -230,3 +230,8 @@ runbook, prerequisites, and per-connector setup. Locally, the same
 - `docs/security-guardrails.md` — the approval-gate guarantee in detail.
 - `docs/running-locally.md` / `docs/deployment.md` — how to actually run this, locally and on AWS.
 - `.claude/skills/tool-integration/SKILL.md` — the checklist for adding a new connector.
+- The orchestrator repo's `README.md` ("Agent SDK concepts" and "Why the
+  Claude Agent SDK *and* LangGraph") — the caller side of this API: how
+  agents wrap these routes as tools, their turn/budget limits, and where
+  agent frameworks such as Strands would fit. None of that belongs in
+  this package, which has no reasoning of its own.

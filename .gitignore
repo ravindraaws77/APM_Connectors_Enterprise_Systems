@@ -34,3 +34,6 @@ state/*.json
 !**/terraform.tfvars.example
 crash.log
 crash.*.log
+
+# Test workbook created by scripts/start_test_server.py
+state/test/

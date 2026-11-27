@@ -74,6 +74,8 @@ src/apm_connectors/
   api/           FastAPI app + /tools/* routes
 tests/               unit tests, runnable without live credentials
 tests/integration/   full-stack tests against a real running server, also no live credentials
-scripts/         manual smoke-test scripts for real credentials
+scripts/         manual smoke-test scripts for real credentials, plus
+                 start_test_server.py (a test-config-only server for
+                 apm_orchestrator's live tests)
 infra/aws/       Terraform to deploy the API to AWS ECS on Fargate
 ```
