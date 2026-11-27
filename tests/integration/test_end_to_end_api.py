@@ -20,7 +20,13 @@ from tests.integration.conftest import LiveServer
 def test_health_and_processes_are_reachable(live_server: LiveServer) -> None:
     health = requests.get(f"{live_server.base_url}/health", timeout=5)
     assert health.status_code == 200
-    assert health.json() == {"status": "ok"}
+    # /health now checks the state store and every configured connector
+    # (tests/test_health.py covers the degraded/503 cases); over HTTP with
+    # fakes, everything should report healthy.
+    body = health.json()
+    assert body["status"] == "ok"
+    assert body["state_store"] is True
+    assert body["tools"] and all(body["tools"].values())
 
     processes = requests.get(f"{live_server.base_url}/processes", timeout=5)
     assert processes.status_code == 200
