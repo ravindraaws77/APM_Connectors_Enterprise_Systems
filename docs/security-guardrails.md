@@ -12,9 +12,10 @@ target state.
   shared service account, for this MVP.
 - **Callers of this API are authenticated too, once configured.** Set
   `APM_API_KEYS` (see `.env.example`) before a deployment is reachable
-  beyond a network boundary it already trusts — every `/tools/*` and
-  `/processes/*` route then requires a bearer token matching a
-  configured key (`/health` stays open, for load-balancer checks). This
+  beyond a network boundary it already trusts — every `/tools/*`,
+  `/processes/*`, and `/metrics` route then requires a bearer token
+  matching a configured key (`/health` stays open, for load-balancer
+  checks). This
   is opt-in and off by default (see `docs/api-contract.md`): a fresh
   local checkout has no auth, exactly as always. Each key names a
   caller, not just a yes/no check — that name is what lands in the

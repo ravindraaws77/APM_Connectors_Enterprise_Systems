@@ -5,19 +5,25 @@ the other (both are wired into the FastAPI app in app.py's create_app).
 
 from __future__ import annotations
 
+import logging
+
 from fastapi import HTTPException
 
 from apm_connectors.api.schemas import RunOutcomeResponse
 from apm_connectors.graph import RunOutcome
+
+logger = logging.getLogger("apm_connectors.api")
 
 
 def upstream_error(exc: Exception) -> HTTPException:
     """Turn an unexpected failure from the graph/a tool (a network error,
     an exhausted retry, an upstream API error, ...) into a clean 502
     response with a readable message, instead of letting an unhandled
-    500 with a raw Python traceback reach the caller. Uvicorn still logs
-    the full traceback server-side either way.
+    500 with a raw Python traceback reach the caller. Logged here as
+    structured JSON (see logging_config.py) with the full traceback,
+    rather than relying on uvicorn's own unstructured server log.
     """
+    logger.error("upstream tool error", exc_info=exc)
     return HTTPException(status_code=502, detail=f"Upstream tool error: {exc}")
 
 
